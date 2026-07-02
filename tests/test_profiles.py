@@ -254,11 +254,10 @@ class UpdaterVersionTests(unittest.TestCase):
         with mock.patch.object(updater, "_github_json", side_effect=by_url):
             self.assertEqual(updater.latest_version_online(), "v0.10.0")
 
-    def test_latest_version_falls_back_to_git_when_api_empty(self):
-        # Neither releases nor GitHub tags → git ls-remote fallback.
-        with mock.patch.object(updater, "_github_json", return_value=None), \
-             mock.patch.object(updater, "_git", return_value="abc\trefs/tags/v0.7.0\n"):
-            self.assertEqual(updater.latest_version(Path("/nonexistent")), "v0.7.0")
+    def test_latest_version_online_none_when_api_empty(self):
+        # Neither releases nor tags → None (no git fallback; git is not used).
+        with mock.patch.object(updater, "_github_json", return_value=None):
+            self.assertIsNone(updater.latest_version_online())
 
 
 class UpdaterRunTests(unittest.TestCase):
@@ -276,56 +275,67 @@ class UpdaterRunTests(unittest.TestCase):
         self._cfg.cleanup()
         self._tmp.cleanup()
 
-    def _make_git_checkout(self):
-        (self.root / ".git").mkdir()
-
-    def test_not_a_git_checkout_returns_1(self):
-        # No .git present.
-        self.assertEqual(updater.run(self.root, "0.1.0", check_only=False), 1)
-
     def test_up_to_date_returns_0(self):
-        self._make_git_checkout()
-        with mock.patch.object(updater, "latest_version", return_value="v0.1.0"):
+        with mock.patch.object(updater, "latest_version_online", return_value="v0.1.0"):
             self.assertEqual(updater.run(self.root, "0.1.0", check_only=False), 0)
 
     def test_no_latest_returns_1(self):
-        self._make_git_checkout()
-        with mock.patch.object(updater, "latest_version", return_value=None):
+        with mock.patch.object(updater, "latest_version_online", return_value=None):
             self.assertEqual(updater.run(self.root, "0.1.0", check_only=True), 1)
 
-    def test_behind_check_only_makes_no_git_changes(self):
-        self._make_git_checkout()
-        with mock.patch.object(updater, "latest_version", return_value="v0.2.0"), \
-             mock.patch.object(updater, "_git") as git:
+    def test_behind_check_only_does_not_download(self):
+        with mock.patch.object(updater, "latest_version_online", return_value="v0.2.0"), \
+             mock.patch.object(updater, "_download_and_apply") as dl:
             self.assertEqual(updater.run(self.root, "0.1.0", check_only=True), 0)
-            git.assert_not_called()  # --check never touches git
+            dl.assert_not_called()  # --check never downloads
 
-    def test_behind_dirty_refuses(self):
-        self._make_git_checkout()
-        with mock.patch.object(updater, "latest_version", return_value="v0.2.0"), \
-             mock.patch.object(updater, "_is_dirty", return_value=True), \
-             mock.patch.object(updater, "_git") as git:
-            self.assertEqual(updater.run(self.root, "0.1.0", check_only=False), 1)
-            git.assert_not_called()  # refuses before fetch/checkout
-
-    def test_behind_clean_fetches_and_checks_out(self):
-        self._make_git_checkout()
-        calls = []
-
-        def fake_git(root, *args, capture=False):
-            calls.append(args)
-            return ""
-
-        with mock.patch.object(updater, "latest_version", return_value="v0.2.0"), \
-             mock.patch.object(updater, "_is_dirty", return_value=False), \
-             mock.patch.object(updater, "_git", side_effect=fake_git):
+    def test_behind_downloads_and_applies(self):
+        with mock.patch.object(updater, "latest_version_online", return_value="v0.2.0"), \
+             mock.patch.object(updater, "_download_and_apply", return_value=0) as dl:
             self.assertEqual(updater.run(self.root, "0.1.0", check_only=False), 0)
+            dl.assert_called_once_with(self.root, "v0.2.0")
 
-        verbs = [args[0] for args in calls]
-        self.assertIn("fetch", verbs)
-        self.assertIn("checkout", verbs)
-        # checked out the resolved latest tag
-        self.assertTrue(any(args[0] == "checkout" and "v0.2.0" in args for args in calls))
+    def test_download_and_apply_extracts_release_over_repo(self):
+        import io
+        import tarfile
+
+        # Build an in-memory release archive: desk-cli-0.2.0/{desk, src/desk_cli/__init__.py}
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            for name, content in [
+                ("desk-cli-0.2.0/desk", "#!/usr/bin/env python3\n# new shim\n"),
+                ("desk-cli-0.2.0/src/desk_cli/__init__.py", '__version__ = "0.2.0"\n'),
+            ]:
+                data = content.encode()
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        payload = buf.getvalue()
+
+        # Seed an "old" install.
+        (self.root / "desk").write_text("# old shim\n", encoding="utf-8")
+        (self.root / "src" / "desk_cli").mkdir(parents=True)
+        (self.root / "src" / "desk_cli" / "__init__.py").write_text('__version__ = "0.1.0"\n', encoding="utf-8")
+
+        class _Resp:
+            def __init__(self, b):
+                self._b = b
+
+            def read(self):
+                return self._b
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        with mock.patch.object(updater.urllib.request, "urlopen", return_value=_Resp(payload)):
+            rc = updater._download_and_apply(self.root, "v0.2.0")
+
+        self.assertEqual(rc, 0)
+        self.assertIn("0.2.0", (self.root / "src" / "desk_cli" / "__init__.py").read_text())
+        self.assertIn("new shim", (self.root / "desk").read_text())
 
 
 class UpdaterNotifyTests(unittest.TestCase):
