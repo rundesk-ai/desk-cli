@@ -1,5 +1,7 @@
 # desk
 
+[![CI](https://github.com/rundesk-ai/desk-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/rundesk-ai/desk-cli/actions/workflows/ci.yml)
+
 A lightweight, installable command-line client for the [Rundesk](https://rundesk.ai) API.
 
 `desk` stores your Rundesk API credentials locally as one or more named **profiles**

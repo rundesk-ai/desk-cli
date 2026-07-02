@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Prevent the passive update check from making network calls during tests.
+env:
+  DESK_NO_UPDATE_CHECK: "1"
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        # Also cover the macOS target the CLI ships for.
+        include:
+          - os: macos-latest
+            python-version: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Zero third-party dependencies — nothing to install.
+
+      - name: Syntax check (all sources + tests parse)
+        run: |
+          python -c "import ast, glob; [ast.parse(open(f).read()) for f in glob.glob('src/desk_cli/*.py') + glob.glob('tests/*.py')]; print('parse OK')"
+
+      - name: Installer script syntax
+        run: bash -n install.sh
+
+      - name: profiles + updater tests
+        run: python tests/test_profiles.py
+
+      - name: CLI end-to-end coverage tests
+        run: python tests/test_cli.py
+
+      - name: REST client tests
+        run: python tests/test_rundesk.py
