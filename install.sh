@@ -3,12 +3,12 @@
 # runs on the system python3 (>=3.9) and the stdlib only.
 #
 # One-command install (downloads the latest release, no clone):
-#   curl -fsSL https://raw.githubusercontent.com/rundesk-ai/desk-cli/main/install.sh | bash
+#   curl -fsSL https://github.com/rundesk-ai/desk-cli/releases/latest/download/install.sh | bash
 #
 # From a local checkout, `./install.sh` symlinks THAT checkout (for development).
 #
 # Uninstall:
-#   curl -fsSL https://raw.githubusercontent.com/rundesk-ai/desk-cli/main/install.sh | bash -s -- --uninstall [--purge]
+#   curl -fsSL https://github.com/rundesk-ai/desk-cli/releases/latest/download/install.sh | bash -s -- --uninstall [--purge]
 #   ./install.sh --uninstall [--purge]
 #
 # Env overrides: DESK_INSTALL_DIR (default ~/.desk), DESK_BIN_DIR, DESK_REPO_SLUG.
