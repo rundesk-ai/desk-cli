@@ -234,16 +234,23 @@ class DeskSurfaceTests(_TransportMixin):
         self.assertEqual(rc, 0)
         self.assertIn("week=7", self.captured[0]["url"])
 
-    def test_show_is_top_level_and_hits_desk(self):
-        rc = cli.main(["show"])
+    def test_whoami_is_the_desk_identity(self):
+        rc = cli.main(["whoami"])
         self.assertEqual(rc, 0)
         self.assertTrue(self.captured[0]["url"].split("?")[0].endswith("/desk"))
 
-    def test_desk_group_and_memory_removed(self):
+    def test_account_is_the_account_record(self):
+        rc = cli.main(["account"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.captured[0]["url"].split("?")[0].endswith("/me"))
+
+    def test_desk_group_show_and_memory_removed(self):
         choices = _find_subparsers(cli.build_parser()).choices
         self.assertNotIn("desk", choices)  # no more `desk desk`
+        self.assertNotIn("show", choices)  # show dropped; whoami replaces it
+        self.assertIn("whoami", choices)
+        self.assertIn("account", choices)
         self.assertIn("inbox", choices)
-        self.assertIn("show", choices)
         # No memory command survives anywhere in the tree.
         leaf_names = {p[-1] for p, _ in _leaves(cli.build_parser())}
         self.assertFalse({n for n in leaf_names if "memory" in n}, f"memory leaves remain: {leaf_names}")

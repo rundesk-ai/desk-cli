@@ -116,8 +116,8 @@ compact pipe-delimited rows by default; pass `--json` for the raw payload.
 Destructive deletes require `--confirm`.
 
 ```
-desk whoami | account | changelog
-desk show                       # this desk's identity: brief, rules, jobs, projects
+desk whoami                     # this desk's identity: brief, rules, jobs, projects
+desk account | changelog        # the account record behind the key
 desk inbox [--week N | --unscheduled]   # this desk's to-do (tasks + mentions)
 desk jobs    list | get | create | update | delete
 desk projects list | get | create | update | archive | unarchive | delete

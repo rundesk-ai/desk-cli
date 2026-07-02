@@ -7,8 +7,8 @@ the things a personal, installable CLI needs on top of the raw API:
 
   * ``desk profile …`` — manage local API credentials (multiple named profiles),
     plus a global ``--profile NAME`` to target one for a single command,
-  * ``desk update`` / ``desk uninstall`` / ``desk help``, and a promoted
-    ``desk show`` / ``desk inbox`` in place of the nested desk group.
+  * ``desk update`` / ``desk uninstall`` / ``desk help``, a ``desk whoami`` that
+    reports this desk's identity, and ``desk inbox`` in place of the desk group.
 
 For any API command it resolves credentials from the profile store (see
 ``profiles.resolve_credentials``) and constructs a ``RundeskClient`` from them,
@@ -56,8 +56,9 @@ def _remove_subcommand(sub: argparse._SubParsersAction, name: str) -> None:
     sub._choices_actions = [a for a in sub._choices_actions if getattr(a, "dest", None) != name]
 
 
-def _cmd_show(args: argparse.Namespace, client: RundeskClient) -> int:
-    """`desk show` — this desk's identity: brief, rules, jobs, and projects."""
+def _cmd_whoami(args: argparse.Namespace, client: RundeskClient) -> int:
+    """`desk whoami` — this desk's identity: brief, rules, jobs, and projects.
+    (The account record behind the key is available via `desk account`.)"""
     api._emit(client.get_desk(as_text=not args.json), args.json)
     return 0
 
@@ -73,14 +74,16 @@ def _cmd_inbox(args: argparse.Namespace, client: RundeskClient) -> int:
 
 
 def _reshape_desk_surface(sub: argparse._SubParsersAction) -> None:
-    """Replace the nested `desk` group (show/inbox/memory*) with core
-    top-level commands: drop the memory surface entirely and promote the two
-    reads to `desk show` and `desk inbox`."""
+    """Reshape the vendored surface: drop the nested `desk` group (incl. its
+    memory subcommands), repoint `whoami` at this desk's identity (`GET /desk`),
+    and promote the desk inbox to a top-level `desk inbox`. The account record
+    behind the key stays available via `desk account`."""
     _remove_subcommand(sub, "desk")
+    _remove_subcommand(sub, "whoami")  # was the account /me one-liner; now the desk identity
 
-    show = sub.add_parser("show", help="Show this desk's identity — brief, rules, jobs, and projects.")
-    show.add_argument("--json", action="store_true", help="Print the raw desk JSON.")
-    show.set_defaults(handler=_cmd_show)
+    whoami = sub.add_parser("whoami", help="Who am I — this desk's identity: brief, rules, jobs, and projects.")
+    whoami.add_argument("--json", action="store_true", help="Print the raw desk JSON.")
+    whoami.set_defaults(handler=_cmd_whoami)
 
     inbox = sub.add_parser(
         "inbox",
