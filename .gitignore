@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Local environment / credentials (never commit; live in ~/.config/desk/)
+.env
+config.json
+
+# OS / editor
+.DS_Store
+*.swp

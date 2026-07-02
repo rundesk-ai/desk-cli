@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""desk — installable CLI entry point for the Rundesk API.
+
+This file is the executable the installer symlinks onto your PATH. It resolves
+its own real location (``.resolve()`` follows the symlink back into the repo),
+puts the bundled ``src/desk_cli`` package dir on ``sys.path`` so the flat
+``client`` / ``rundesk`` / ``profiles`` / ``updater`` modules import exactly as
+they do upstream, then hands off to ``cli.main``. It owns no logic itself.
+"""
+
+import sys
+from pathlib import Path
+
+# .resolve() follows the /usr/local/bin symlink back to the repo checkout.
+REPO_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(REPO_ROOT / "src" / "desk_cli"))
+
+from cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
