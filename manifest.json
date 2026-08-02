@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "desk-cli",
   "version": "0.2.0",
-  "description": "Working a Rundesk desk from the command line: tasks, weeks, mentions, projects, and files.",
+  "description": "Managing a Rundesk desk's tasks from the command line.",
   "skills": [
     {
       "name": "managing-your-desk",

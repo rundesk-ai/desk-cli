@@ -104,7 +104,7 @@ rundesk skills install https://github.com/rundesk-ai/desk-cli --confirm  # insta
 rundesk skills grant <agent> managing-your-desk
 ```
 
-`managing-your-desk` teaches an agent to orient with `desk show`, pull its work from `desk inbox`, read what was said to it with `desk mentions`, and act through `desk tasks …` — and where the line is: **the desk holds tasks and projects; an agent's rules, memory, and identity stay in its own home.**
+`managing-your-desk` teaches an agent to run its desk's tasks: `desk inbox` for the week's work and unread mentions, how Rundesk's numbered week buckets and backlog behave, and that reporting back means a comment on the task.
 
 Installing the catalog does not install `desk` itself — do that first, with the one-liner at the top of this README.
 
