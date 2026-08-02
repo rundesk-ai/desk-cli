@@ -94,6 +94,20 @@ Several agents (or people) can share a single install, each with their own ident
 - **Per command:** `desk --profile agent-b tasks list`.
 - **Full isolation:** give each agent its own `XDG_CONFIG_HOME` for a completely separate config.
 
+## Teaching an agent to use it
+
+This repository is also a **Rundesk skill catalog**. If you run agents with [`rundesk`](https://github.com/rundesk-ai/rundesk-cli), install it once and grant the skill to whichever agents have a desk:
+
+```bash
+rundesk skills install https://github.com/rundesk-ai/desk-cli            # preview
+rundesk skills install https://github.com/rundesk-ai/desk-cli --confirm  # install
+rundesk skills grant <agent> managing-your-desk
+```
+
+`managing-your-desk` teaches an agent to orient with `desk show`, pull its work from `desk inbox`, read what was said to it with `desk mentions`, and act through `desk tasks …` — and where the line is: **the desk holds tasks and projects; an agent's rules, memory, and identity stay in its own home.**
+
+Installing the catalog does not install `desk` itself — do that first, with the one-liner at the top of this README.
+
 ## Staying up to date
 
 `desk` checks for new versions and lets you know when one is available. Upgrading is one command:

@@ -7,6 +7,8 @@ command tree (``rundesk.py``) with local multi-profile credential storage
 
 ``__version__`` is the single source of truth consulted by ``desk --version`` and
 ``desk update``; bump it and push a matching ``vX.Y.Z`` git tag for every release.
+The repository is also a Rundesk skill catalog, and ``manifest.json``'s ``version``
+tracks this one — ``tests/test_cli.py`` fails when the two drift apart.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

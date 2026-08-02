@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -509,6 +511,96 @@ class UpdateRoutingTests(unittest.TestCase):
         with mock.patch.object(cli.updater, "run", return_value=0) as run:
             cli.main(["update"])
         run.assert_called_once_with(cli.REPO_ROOT, cli.__version__, check_only=False)
+
+
+class CatalogManifestTests(unittest.TestCase):
+    """This repository is also a Rundesk skill catalog: `manifest.json` at the root
+    plus a complete Agent Skill package per declared entry.
+
+    Rundesk validates a catalog on install and then *silently* ignores a package a
+    brain would not index — a name with an underscore, a frontmatter name that
+    disagrees with its directory, an over-long description. The failure mode is a
+    skill that installs and never fires, which nothing reports. So the same rules are
+    checked here, where a break is visible, rather than on somebody else's machine.
+    """
+
+    #: The catalog contract rundesk enforces (its `skill.ALLOWED`, `NAMED_LIMIT`,
+    #: `DESCRIBED_LIMIT`). Restated rather than imported: rundesk is a separate
+    #: install that is not here, and this repository is published without it.
+    ALLOWED_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+    NAME_LIMIT = 64
+    DESCRIPTION_LIMIT = 1024
+    SCHEMA = 1
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(__file__).resolve().parents[1]
+        cls.manifest = json.loads((cls.root / "manifest.json").read_text(encoding="utf-8"))
+
+    def test_manifest_version_tracks_the_package_version(self):
+        """One release, one number. A catalog whose version trails `__version__`
+        makes `rundesk skills update` refuse the newer repository as older."""
+        self.assertEqual(self.manifest["version"], cli.__version__)
+
+    def test_manifest_declares_a_valid_catalog(self):
+        self.assertEqual(self.manifest["schema"], self.SCHEMA)
+        self.assertRegex(self.manifest["name"], self.ALLOWED_NAME)
+        self.assertRegex(self.manifest["version"], r"^\d+\.\d+\.\d+$")
+        described = self.manifest["description"]
+        self.assertTrue(described.strip())
+        self.assertLessEqual(len(described), self.DESCRIPTION_LIMIT)
+        self.assertTrue(self.manifest["skills"], "a catalog declares at least one skill")
+
+    def test_every_declared_skill_is_a_complete_package(self):
+        for entry in self.manifest["skills"]:
+            name, declared = entry["name"], entry["path"]
+            with self.subTest(skill=name):
+                at = (self.root / declared).resolve()
+                self.assertIn(self.root, at.parents, "a skill path cannot leave the repository")
+                self.assertTrue(at.is_dir(), f"{declared} is not a directory")
+                self.assertEqual(at.name, name, "the directory and the manifest must agree")
+
+                page = at / "SKILL.md"
+                self.assertTrue(page.is_file(), f"{declared} has no SKILL.md")
+                said = _frontmatter(page.read_text(encoding="utf-8"))
+                self.assertIsNotNone(said, "SKILL.md must open with a --- frontmatter block")
+
+                # A brain indexes by the frontmatter name; a disagreement here is a
+                # skill that is present and unreachable.
+                self.assertEqual(said.get("name"), name)
+                self.assertRegex(name, self.ALLOWED_NAME)
+                self.assertLessEqual(len(name), self.NAME_LIMIT)
+
+                described = said.get("description") or ""
+                self.assertTrue(described.strip(), "the description is the whole of what a brain sees")
+                self.assertLessEqual(len(described), self.DESCRIPTION_LIMIT)
+
+    def test_the_repository_ships_no_undeclared_skill(self):
+        """A package added under `skills/` and left out of the manifest is never
+        installed — and looks installed to whoever added it."""
+        present = sorted(
+            one.name for one in (self.root / "skills").iterdir() if (one / "SKILL.md").is_file()
+        )
+        self.assertEqual(present, sorted(entry["name"] for entry in self.manifest["skills"]))
+
+
+def _frontmatter(text: str) -> dict | None:
+    """The `name` and `description` out of a SKILL.md, or None if there is no block.
+
+    Two scalars read by hand: the standard library has no YAML parser, and this is
+    exactly how rundesk reads the same file.
+    """
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    said: dict = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return said
+        what, _, rest = line.partition(":")
+        if rest and what.strip() in ("name", "description") and not what.startswith((" ", "\t")):
+            said[what.strip()] = rest.strip().strip("'\"")
+    return None
 
 
 def _capture_stdout(fn) -> str:

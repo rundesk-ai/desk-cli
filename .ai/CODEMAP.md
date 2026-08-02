@@ -1,6 +1,6 @@
 # Codemap - desk-cli
 
-Structural inventory of the `desk` CLI. A Python stdlib-only package: a thin executable shim, a five-module package under `src/desk_cli/`, three offline test suites, and an installer. Request flow is one direction: `cli.py` → `rundesk.py` → `client.py`.
+Structural inventory of the `desk` CLI. A Python stdlib-only package: a thin executable shim, a five-module package under `src/desk_cli/`, three offline test suites, an installer, and a Rundesk skill catalog. Request flow is one direction: `cli.py` → `rundesk.py` → `client.py`.
 
 ## Entry Points
 
@@ -48,7 +48,7 @@ Structural inventory of the `desk` CLI. A Python stdlib-only package: a thin exe
 
 ## Tests (`tests/` — 3, stdlib `unittest`, offline)
 
-- `test_cli.py` — auto-discovers every leaf command and walks it through `cli.main()` against a monkeypatched `urllib.request.urlopen`; asserts exit 0 + credentialed request (36 tests, 65 endpoints). Gate: every public client method is referenced from the command tree — the gate greps BOTH `rundesk.py` and `cli.py`, since the desk-bound surface lives in `cli.py`.
+- `test_cli.py` — auto-discovers every leaf command and walks it through `cli.main()` against a monkeypatched `urllib.request.urlopen`; asserts exit 0 + credentialed request (40 tests, 65 endpoints). Gate: every public client method is referenced from the command tree — the gate greps BOTH `rundesk.py` and `cli.py`, since the desk-bound surface lives in `cli.py`. Also holds `CatalogManifestTests` (the skill catalog contract).
 - `test_rundesk.py` — the REST client's request/response suite (122 tests).
 - `test_profiles.py` — profile store, credential resolution, updater (38 tests).
 
@@ -57,6 +57,13 @@ Structural inventory of the `desk` CLI. A Python stdlib-only package: a thin exe
 - `build.yml` — CI: runs the three suites (README build badge).
 - `release.yml` — cuts a release; `desk update` and `install.sh` consume its archive. Release = bump `__version__` + tag `vX.Y.Z` (the two must match).
 
+## Skill Catalog (`manifest.json` + `skills/`)
+
+- The repository doubles as a Rundesk skill catalog: `manifest.json` at the root declares `schema`/`name`/`version`/`description` and one entry per skill package. `rundesk skills install <repo-url>` reads it; rundesk fetches the **default branch** tarball, so `main` is the catalog — a GitHub release is needed for the `desk` binary, not for the skill.
+- `skills/managing-your-desk/SKILL.md` — the agent-facing skill: orient with `show`, work from `inbox`, read `mentions`, act through `tasks`, and keep rules/memory/identity in the agent's own home, never on the desk.
+- `manifest.json`'s `version` tracks `__version__`; `CatalogManifestTests` in `test_cli.py` fails on drift, on a name/frontmatter disagreement, on a path escaping the repo, and on a `skills/` package missing from the manifest. Rundesk *silently* ignores a package a brain cannot index, so the contract is checked here instead.
+- Nothing in `src/` reads these files. `install.sh` (`mv` of the extracted tree) and `updater._copy_over` (iterates `src.iterdir()`) carry new top-level entries automatically — no archive-layout change.
+
 ## Consumer Docs
 
-- `README.md` — install, profiles, resolution order, update, uninstall; summarizes the command surface. `desk help` (code help text) is the source of truth for command usage.
+- `README.md` — install, profiles, resolution order, update, uninstall, the skill catalog; summarizes the command surface. `desk help` (code help text) is the source of truth for command usage.
