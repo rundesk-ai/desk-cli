@@ -1,6 +1,6 @@
 ---
 name: managing-your-desk
-description: Manage a Rundesk desk's tasks with `desk`. Use for anything about this desk's work — what is on the plate, what is due, what is unanswered, and creating, scheduling, completing or commenting on tasks — including when nobody says "Rundesk", "desk" or "task".
+description: Manage your desk's rundesk tasks with `desk`. Use for anything about this desk's work — what is on the plate for this week, what is due, what is unanswered, and creating, mentioned, completing or commenting on tasks.
 ---
 
 # Managing desk tasks
