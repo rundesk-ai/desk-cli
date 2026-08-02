@@ -4,10 +4,9 @@
 Covers: URL building (incl. ?format=text and ?meta= JSON encoding), env-key
 resolution via the dotenv-reuse loader, single-key CLI client construction,
 RundeskError → exit-code mapping, and request payload shaping for patch_page / create_page /
-get_desk_inbox / grep_desk_memory / patch_desk_memory(_surgical) / list_jobs /
-create_job / list_task_comments / create_task / update_task / set_task_recurring /
-create_desk (the real desk field set) — verified by monkeypatching the transport
-so nothing leaves the process.
+get_desk_inbox / get_desk_mentions / list_task_comments / create_task / update_task /
+set_task_recurring / create_desk (the real desk field set) — verified by
+monkeypatching the transport so nothing leaves the process.
 
 Run: python3 tests/test_rundesk.py
 """
@@ -300,17 +299,6 @@ class PayloadShapingTests(unittest.TestCase):
         self.client.create_page(5, body=None)
         self.assertEqual(self.transport.last["payload"], {"body": None})
 
-    def test_patch_desk_memory_keeps_key_when_none(self):
-        self.client.patch_desk_memory(None)
-        call = self.transport.last
-        self.assertEqual(call["method"], "PATCH")
-        self.assertEqual(call["path"], "/desk/memory")
-        self.assertEqual(call["payload"], {"memory": None})
-
-    def test_patch_desk_memory_with_text(self):
-        self.client.patch_desk_memory("remember this")
-        self.assertEqual(self.transport.last["payload"], {"memory": "remember this"})
-
     def test_get_desk_inbox_default(self):
         self.client.get_desk_inbox()
         call = self.transport.last
@@ -329,57 +317,18 @@ class PayloadShapingTests(unittest.TestCase):
         self.client.get_desk_inbox(unscheduled=True)
         self.assertIn("unscheduled=1", self.transport.last["url"])
 
-    def test_grep_desk_memory_params(self):
-        self.client.grep_desk_memory("foo.*bar", context=2, ignore_case=True)
+    def test_get_desk_mentions_default(self):
+        self.client.get_desk_mentions()
         call = self.transport.last
         self.assertEqual(call["method"], "GET")
-        self.assertEqual(call["path"], "/desk/memory/grep")
-        self.assertIn("context=2", call["url"])
-        self.assertIn("ignore_case=1", call["url"])
-        self.assertIn("pattern=", call["url"])
+        self.assertEqual(call["path"], "/desk/mentions")
+        self.assertNotIn("limit=", call["url"])
 
-    def test_patch_desk_memory_surgical_replace(self):
-        self.client.patch_desk_memory_surgical(mode="replace", old_str="old", new_str="new")
+    def test_get_desk_mentions_limit(self):
+        self.client.get_desk_mentions(limit=5)
         call = self.transport.last
-        self.assertEqual(call["method"], "POST")
-        self.assertEqual(call["path"], "/desk/memory/patch")
-        self.assertEqual(call["payload"], {"mode": "replace", "old_str": "old", "new_str": "new"})
-
-    def test_patch_desk_memory_surgical_replace_requires_old_str(self):
-        with self.assertRaises(RundeskError) as ctx:
-            self.client.patch_desk_memory_surgical(mode="replace", new_str="new")
-        self.assertEqual(ctx.exception.kind, "usage")
-
-    def test_patch_desk_memory_surgical_append(self):
-        self.client.patch_desk_memory_surgical(mode="append", content="tail")
-        self.assertEqual(self.transport.last["payload"], {"mode": "append", "content": "tail"})
-
-    def test_patch_desk_memory_surgical_prepend_requires_content(self):
-        with self.assertRaises(RundeskError):
-            self.client.patch_desk_memory_surgical(mode="prepend")
-
-    def test_list_jobs_default(self):
-        self.client.list_jobs()
-        call = self.transport.last
-        self.assertEqual(call["method"], "GET")
-        self.assertEqual(call["path"], "/jobs")
-
-    def test_list_jobs_params(self):
-        self.client.list_jobs(search="deploy", desk_id=7)
-        url = self.transport.last["url"]
-        self.assertIn("search=deploy", url)
-        self.assertIn("desk_id=7", url)
-
-    def test_get_job(self):
-        self.client.get_job(5)
-        self.assertEqual(self.transport.last["path"], "/jobs/5")
-
-    def test_create_job_drops_none(self):
-        self.client.create_job(name="Build")
-        call = self.transport.last
-        self.assertEqual(call["method"], "POST")
-        self.assertEqual(call["path"], "/jobs")
-        self.assertEqual(call["payload"], {"name": "Build"})
+        self.assertEqual(call["path"], "/desk/mentions")
+        self.assertIn("limit=5", call["url"])
 
     def test_list_task_comments(self):
         self.client.list_task_comments(8)
@@ -883,7 +832,7 @@ class CliErrorHandlingTests(unittest.TestCase):
     def test_main_returns_exit_code_on_rundesk_error(self):
         with patched_cli_client() as (_cls, inst):
             inst.get_account.side_effect = RundeskError("forbidden")
-            rc = rundesk_mod.main(["whoami"])
+            rc = rundesk_mod.main(["account"])
         self.assertEqual(rc, 4)
 
     def test_read_body_missing_file_raises_usage(self):
@@ -1050,7 +999,7 @@ class CliClientConstructionTests(unittest.TestCase):
     def test_main_builds_client_with_env_file_and_runs_handler(self):
         with mock.patch.object(rundesk_mod, "RundeskClient") as cls:
             with contextlib.redirect_stdout(io.StringIO()):
-                rc = rundesk_mod.main(["--env-file", self.NOENV, "whoami"])
+                rc = rundesk_mod.main(["--env-file", self.NOENV, "account"])
         self.assertEqual(rc, 0)
         _, kwargs = cls.call_args
         self.assertEqual(kwargs.get("env_file"), self.NOENV)
@@ -1062,7 +1011,7 @@ class CliClientConstructionTests(unittest.TestCase):
         with mock.patch.object(rundesk_mod, "RundeskClient", return_value=client):
             err = io.StringIO()
             with contextlib.redirect_stderr(err):
-                rc = rundesk_mod.main(["whoami"])
+                rc = rundesk_mod.main(["account"])
         self.assertEqual(rc, 5)
         self.assertIn("error:", err.getvalue())
 

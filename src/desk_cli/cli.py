@@ -2,13 +2,14 @@
 """The ``desk`` command surface.
 
 This wraps the full-API command tree in ``rundesk.build_parser`` (every Rundesk
-endpoint: account, desk, jobs, projects, pages, tasks, weeks, assets, desks) with
-the things a personal, installable CLI needs on top of the raw API:
+endpoint: account, projects, pages, tasks, weeks, assets, desks) with the things
+a personal, installable CLI needs on top of the raw API:
 
   * ``desk profile …`` — manage local API credentials (multiple named profiles),
     plus a global ``--profile NAME`` to target one for a single command,
-  * ``desk update`` / ``desk uninstall`` / ``desk help``, a ``desk whoami`` that
-    reports this desk's identity, and ``desk inbox`` in place of the desk group.
+  * ``desk update`` / ``desk uninstall`` / ``desk help``, and the desk-bound
+    surface itself: ``desk show`` (identity, owner, projects), ``desk inbox``,
+    and ``desk mentions``.
 
 For any API command it resolves credentials from the profile store (see
 ``profiles.resolve_credentials``) and constructs a ``RundeskClient`` from them,
@@ -50,15 +51,16 @@ def _subparsers(parser: argparse.ArgumentParser) -> argparse._SubParsersAction:
     raise RuntimeError("expected a subparsers action on the API parser")
 
 
-def _remove_subcommand(sub: argparse._SubParsersAction, name: str) -> None:
-    """Drop a subcommand from a subparsers action (choices + help listing)."""
-    sub._name_parser_map.pop(name, None)  # this dict IS `sub.choices`
+def _hide_subcommand(sub: argparse._SubParsersAction, name: str) -> None:
+    """Keep a subcommand working but drop it from the help listing. `help` alone
+    is not enough: argparse prints a `help=SUPPRESS` choice as a literal
+    "==SUPPRESS==" row, so its pseudo-action has to go."""
     sub._choices_actions = [a for a in sub._choices_actions if getattr(a, "dest", None) != name]
 
 
-def _cmd_whoami(args: argparse.Namespace, client: RundeskClient) -> int:
-    """`desk whoami` — this desk's identity: brief, rules, jobs, and projects.
-    (The account record behind the key is available via `desk account`.)"""
+def _cmd_show(args: argparse.Namespace, client: RundeskClient) -> int:
+    """`desk show` — this desk: identity, owner, and projects. (The account
+    record behind the key is available via `desk account`.)"""
     api._emit(client.get_desk(as_text=not args.json), args.json)
     return 0
 
@@ -73,17 +75,26 @@ def _cmd_inbox(args: argparse.Namespace, client: RundeskClient) -> int:
     return 0
 
 
-def _reshape_desk_surface(sub: argparse._SubParsersAction) -> None:
-    """Reshape the vendored surface: drop the nested `desk` group (incl. its
-    memory subcommands), repoint `whoami` at this desk's identity (`GET /desk`),
-    and promote the desk inbox to a top-level `desk inbox`. The account record
-    behind the key stays available via `desk account`."""
-    _remove_subcommand(sub, "desk")
-    _remove_subcommand(sub, "whoami")  # was the account /me one-liner; now the desk identity
+def _cmd_mentions(args: argparse.Namespace, client: RundeskClient) -> int:
+    """`desk mentions` — unread mentions on this desk's tasks, newest first."""
+    api._emit(client.get_desk_mentions(limit=args.limit, as_text=not args.json), args.json)
+    return 0
 
-    whoami = sub.add_parser("whoami", help="Who am I — this desk's identity: brief, rules, jobs, and projects.")
+
+def _reshape_desk_surface(sub: argparse._SubParsersAction) -> None:
+    """Add the desk-bound surface the installed CLI owns: `show` (this desk's
+    identity, owner, and projects), `inbox`, and `mentions`. `whoami` stays
+    registered as a hidden alias of `show` so installed agents and scripts that
+    already call it keep working. The account record behind the key stays
+    available via `desk account`."""
+    show = sub.add_parser("show", help="This desk: identity, owner, and projects.")
+    show.add_argument("--json", action="store_true", help="Print the raw desk JSON.")
+    show.set_defaults(handler=_cmd_show)
+
+    whoami = sub.add_parser("whoami", help=argparse.SUPPRESS)  # hidden alias of `show`
     whoami.add_argument("--json", action="store_true", help="Print the raw desk JSON.")
-    whoami.set_defaults(handler=_cmd_whoami)
+    whoami.set_defaults(handler=_cmd_show)
+    _hide_subcommand(sub, "whoami")
 
     inbox = sub.add_parser(
         "inbox",
@@ -94,6 +105,11 @@ def _reshape_desk_surface(sub: argparse._SubParsersAction) -> None:
     scope.add_argument("--unscheduled", action="store_true", help="The desk's no-week (unscheduled) inbox tasks.")
     inbox.add_argument("--json", action="store_true", help="Print the raw inbox JSON.")
     inbox.set_defaults(handler=_cmd_inbox)
+
+    mentions = sub.add_parser("mentions", help="Unread mentions on this desk's tasks.")
+    mentions.add_argument("--limit", type=int, help="1–100 — cap the number of mentions returned.")
+    mentions.add_argument("--json", action="store_true", help="Print the raw mentions JSON.")
+    mentions.set_defaults(handler=_cmd_mentions)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -114,6 +130,9 @@ def build_parser() -> argparse.ArgumentParser:
             action.help = argparse.SUPPRESS
 
     sub = _subparsers(parser)
+    # Name the choice slot instead of listing every command inline: the usage
+    # line stays readable AND the hidden `whoami` alias is not advertised there.
+    sub.metavar = "<command>"
     _reshape_desk_surface(sub)
 
     profile = sub.add_parser("profile", help="Manage local Rundesk API profiles (stored on this machine).")

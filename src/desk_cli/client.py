@@ -108,23 +108,16 @@ class Paths:
     week = "/week"
     weeks = "/weeks"
     tasks = "/tasks"
-    jobs = "/jobs"
     pages_search = "/pages/search"
     project_assets_search = "/projects/assets/search"
 
     # Desk (agent) surface — desk resolved from the key, no {desk} in the URL.
     desk = "/desk"
     desk_inbox = "/desk/inbox"
-    desk_memory = "/desk/memory"
-    desk_memory_grep = "/desk/memory/grep"
-    desk_memory_patch = "/desk/memory/patch"
+    desk_mentions = "/desk/mentions"
 
     # Owner desk-management surface.
     desks = "/desks"
-
-    @staticmethod
-    def job(job_id: Any) -> str:
-        return f"/jobs/{job_id}"
 
     @staticmethod
     def week_for(date: str) -> str:
@@ -393,46 +386,12 @@ class RundeskClient:
         params = {"limit": limit, "all": 1 if all else None}
         return self.request("GET", Paths.changelog, params=params)
 
-    # ── Jobs (workspace-global manuals; reads open, writes owner-only) ───────
-    def list_jobs(self, search: str | None = None, desk_id: Any | None = None, as_text: bool = False) -> Any:
-        """GET /jobs → a plain JSON array of job manuals (each with `desks_count`),
-        or `id|slug|group|name|desks` text rows. Any key may read. `search`
-        matches name/group; `desk_id` restricts to a desk's attached jobs."""
-        params = {"search": search, "desk_id": desk_id}
-        return self.request("GET", Paths.jobs, params=params, as_text=as_text)
-
-    def get_job(self, job_id: Any, as_text: bool = False) -> Any:
-        """GET /jobs/{id} → one job by its numeric id (the full `manual`
-        markdown). Text mode is the `name|group` header + `Manual:` body. Any key
-        may read; 404 if the id isn't in the caller's workspace."""
-        return self.request("GET", Paths.job(job_id), as_text=as_text)
-
-    def create_job(self, name: str, group: str | None = None, manual: str | None = None) -> Any:
-        """POST /jobs → create a job (OWNER key only; a desk-bound agent key is
-        403). `name` ≤255 (slug auto-derived); `group` blank → "General";
-        `manual` markdown. Returns 201 with the job."""
-        payload = _compact({"name": name, "group": group, "manual": manual})
-        return self.request("POST", Paths.jobs, payload=payload)
-
-    def update_job(
-        self, job_id: Any, name: str | None = None, group: str | None = None, manual: str | None = None
-    ) -> Any:
-        """PUT /jobs/{id} → update a job (OWNER key only). Same fields as create
-        (all optional; `name` non-empty when present). Renaming re-derives the
-        slug. Returns the updated job."""
-        payload = _compact({"name": name, "group": group, "manual": manual})
-        return self.request("PUT", Paths.job(job_id), payload=payload)
-
-    def delete_job(self, job_id: Any) -> Any:
-        """DELETE /jobs/{id} → soft-delete a job and detach it from every desk
-        (OWNER key only). Returns None (204)."""
-        return self.request("DELETE", Paths.job(job_id))
-
     # ── Desk surface (agent / desk-bound key) ────────────────────────────────
     def get_desk(self, as_text: bool = False) -> Any:
-        """GET /desk → the bound desk's full row + nested `projects[]` (each a raw
-        project object INCLUDING short_code and desk_id — the desk-scoped key
-        map). Text mode renders `key|name|archived` + a scope summary."""
+        """GET /desk → the bound desk's identity, owner, and nested `projects[]`
+        (each a raw project object INCLUDING short_code and desk_id — the
+        desk-scoped key map). Text mode renders `key|name|archived` + a scope
+        summary."""
         return self.request("GET", Paths.desk, as_text=as_text)
 
     def get_desk_inbox(
@@ -457,61 +416,11 @@ class RundeskClient:
             params["unscheduled"] = 1
         return self.request("GET", Paths.desk_inbox, params=params or None, as_text=as_text)
 
-    def get_desk_memory(self, as_text: bool = False) -> Any:
-        """GET /desk/memory → the full desk row (no projects); the `memory` text
-        column is one field. Text mode returns the raw memory verbatim."""
-        return self.request("GET", Paths.desk_memory, as_text=as_text)
-
-    def patch_desk_memory(self, memory: str | None, as_text: bool = False) -> Any:
-        """PATCH /desk/memory → whole-column Memory replace. The `memory` key is
-        always sent (None / "" clears it). Returns the updated desk."""
-        return self.request("PATCH", Paths.desk_memory, payload={"memory": memory}, as_text=as_text)
-
-    def grep_desk_memory(
-        self,
-        pattern: str,
-        context: int | None = None,
-        ignore_case: bool = False,
-        as_text: bool = False,
-    ) -> Any:
-        """GET /desk/memory/grep → regex grep over the Memory column (find the
-        exact anchor for a surgical patch). `pattern` PCRE (≤1000); `context`
-        0–10 lines around each match; `ignore_case` for case-insensitive. Text
-        mode is grep's `line:content` / `line-content` wire format; JSON is the
-        structured `{pattern, total, groups}`. Invalid regex → 422."""
-        params: dict[str, Any] = {"pattern": pattern}
-        if context is not None:
-            params["context"] = context
-        if ignore_case:
-            params["ignore_case"] = 1
-        return self.request("GET", Paths.desk_memory_grep, params=params, as_text=as_text)
-
-    def patch_desk_memory_surgical(
-        self,
-        mode: str,
-        old_str: str | None = None,
-        new_str: str | None = None,
-        content: str | None = None,
-        as_text: bool = False,
-    ) -> Any:
-        """POST /desk/memory/patch → surgical Memory edit (analogue of
-        patch-project-page). `mode="replace"` swaps a UNIQUE `old_str` for
-        `new_str` (empty deletes); `mode="append"`/`"prepend"` add `content` at
-        the end/start. Returns the updated desk (JSON) or the new memory (text).
-        A missing/non-unique replace anchor → 422."""
-        if mode not in {"replace", "append", "prepend"}:
-            raise RundeskError("usage", f"patch mode must be replace/append/prepend, got {mode!r}")
-        payload: dict[str, Any] = {"mode": mode}
-        if mode == "replace":
-            if not old_str:
-                raise RundeskError("usage", "memory patch mode=replace requires a non-empty old_str")
-            payload["old_str"] = old_str
-            payload["new_str"] = new_str or ""
-        else:
-            if not content:
-                raise RundeskError("usage", f"memory patch mode={mode} requires non-empty content")
-            payload["content"] = content
-        return self.request("POST", Paths.desk_memory_patch, payload=payload, as_text=as_text)
+    def get_desk_mentions(self, limit: int | None = None, as_text: bool = True) -> Any:
+        """GET /desk/mentions → unread @-mentions on this desk's tasks, newest
+        first (read-only, desk-bound key). `limit` 1–100 caps the result set."""
+        params = _compact({"limit": limit})
+        return self.request("GET", Paths.desk_mentions, params=params or None, as_text=as_text)
 
     # ── Projects ────────────────────────────────────────────────────────────
     def list_projects(
@@ -1036,36 +945,29 @@ class RundeskClient:
     def create_desk(
         self,
         name: str,
-        brief: str | None = None,
-        rules: str | None = None,
-        memory: str | None = None,
         owner_type: str | None = None,
         owner_actor_id: int | None = None,
         project_ids: list[int] | None = None,
     ) -> Any:
         """POST /desks → create a desk (owner key only). `name` ≤255;
-        `brief`/`rules`/`memory` text columns; `owner_type` person|agent|
-        unassigned, with `owner_actor_id` naming an EXISTING actor to own the
-        desk; `project_ids` the managed projects in display order. (Minting a
-        brand-new agent owner is web-UI-only — the API ignores `new_agent_name`.)
-        Returns the created desk."""
-        payload = _desk_payload(name, brief, rules, memory, owner_type, owner_actor_id, project_ids)
+        `owner_type` person|agent|unassigned, with `owner_actor_id` naming an
+        EXISTING actor to own the desk; `project_ids` the managed projects in
+        display order. (Minting a brand-new agent owner is web-UI-only — the API
+        ignores `new_agent_name`.) Returns the created desk."""
+        payload = _desk_payload(name, owner_type, owner_actor_id, project_ids)
         return self.request("POST", Paths.desks, payload=payload)
 
     def update_desk(
         self,
         desk_id: Any,
         name: str | None = None,
-        brief: str | None = None,
-        rules: str | None = None,
-        memory: str | None = None,
         owner_type: str | None = None,
         owner_actor_id: int | None = None,
         project_ids: list[int] | None = None,
     ) -> Any:
         """PUT /desks/{desk} → partial update (same fields as create). Lifecycle is
         via retire_desk/unretire_desk, not a field here."""
-        payload = _desk_payload(name, brief, rules, memory, owner_type, owner_actor_id, project_ids)
+        payload = _desk_payload(name, owner_type, owner_actor_id, project_ids)
         return self.request("PUT", Paths.desk_by_id(desk_id), payload=payload)
 
     def delete_desk(self, desk_id: Any) -> Any:
@@ -1173,9 +1075,6 @@ def _project_payload(
 
 def _desk_payload(
     name: str | None,
-    brief: str | None,
-    rules: str | None,
-    memory: str | None,
     owner_type: str | None = None,
     owner_actor_id: int | None = None,
     project_ids: list[int] | None = None,
@@ -1186,9 +1085,6 @@ def _desk_payload(
     return _compact(
         {
             "name": name,
-            "brief": brief,
-            "rules": rules,
-            "memory": memory,
             "owner_type": owner_type,
             "owner_actor_id": owner_actor_id,
             "project_ids": project_ids,

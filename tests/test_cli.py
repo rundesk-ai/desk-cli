@@ -49,7 +49,7 @@ LOCAL_COMMANDS = {"profile", "update", "uninstall", "help"}
 # Positional dests that should be filled with a numeric id rather than "x".
 ID_DESTS = {
     "project_id", "page_id", "task_id", "comment_id", "asset_id", "desk_id",
-    "job_id", "id", "ref", "week_id", "ids",
+    "id", "ref", "week_id", "ids",
 }
 
 # The few leaves whose client method validates arg combos before requesting:
@@ -203,8 +203,12 @@ class ApiEndpointCoverageTests(_TransportMixin):
 
     def test_every_client_method_reachable_from_command_tree(self):
         """No orphan endpoints: every public RundeskClient API method is invoked
-        by some handler in the command tree."""
-        source = (SRC / "rundesk.py").read_text(encoding="utf-8")
+        by some handler in the command tree. The tree spans two modules —
+        rundesk.py owns the full API groups, cli.py owns the desk-bound
+        surface (show/inbox/mentions)."""
+        source = "\n".join(
+            (SRC / name).read_text(encoding="utf-8") for name in ("rundesk.py", "cli.py")
+        )
         skip = {"build_url", "request", "request_multipart", "items"}
         methods = [
             name
@@ -234,26 +238,50 @@ class DeskSurfaceTests(_TransportMixin):
         self.assertEqual(rc, 0)
         self.assertIn("week=7", self.captured[0]["url"])
 
-    def test_whoami_is_the_desk_identity(self):
+    def test_mentions_is_top_level_and_hits_desk_mentions(self):
+        rc = cli.main(["mentions"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.captured[0]["url"].split("?")[0].endswith("/desk/mentions"))
+
+    def test_mentions_limit_is_sent(self):
+        rc = cli.main(["mentions", "--limit", "5"])
+        self.assertEqual(rc, 0)
+        url = self.captured[0]["url"]
+        self.assertTrue(url.split("?")[0].endswith("/desk/mentions"))
+        self.assertIn("limit=5", url)
+
+    def test_show_is_the_desk_identity(self):
+        rc = cli.main(["show"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.captured[0]["url"].split("?")[0].endswith("/desk"))
+
+    def test_whoami_still_works_as_a_hidden_alias_of_show(self):
         rc = cli.main(["whoami"])
         self.assertEqual(rc, 0)
         self.assertTrue(self.captured[0]["url"].split("?")[0].endswith("/desk"))
+
+    def test_whoami_is_not_advertised_in_help(self):
+        out = _capture_stdout(lambda: self.assertEqual(cli.main(["help"]), 0))
+        self.assertIn("show", out)  # the command that replaced it IS listed
+        self.assertNotIn("whoami", out)
 
     def test_account_is_the_account_record(self):
         rc = cli.main(["account"])
         self.assertEqual(rc, 0)
         self.assertTrue(self.captured[0]["url"].split("?")[0].endswith("/me"))
 
-    def test_desk_group_show_and_memory_removed(self):
+    def test_no_memory_or_jobs_leaf_survives(self):
         choices = _find_subparsers(cli.build_parser()).choices
         self.assertNotIn("desk", choices)  # no more `desk desk`
-        self.assertNotIn("show", choices)  # show dropped; whoami replaces it
-        self.assertIn("whoami", choices)
+        self.assertNotIn("jobs", choices)
+        self.assertIn("show", choices)
         self.assertIn("account", choices)
         self.assertIn("inbox", choices)
-        # No memory command survives anywhere in the tree.
-        leaf_names = {p[-1] for p, _ in _leaves(cli.build_parser())}
-        self.assertFalse({n for n in leaf_names if "memory" in n}, f"memory leaves remain: {leaf_names}")
+        self.assertIn("mentions", choices)
+        # Neither a memory nor a jobs leaf survives anywhere in the built tree.
+        leaves = {" ".join(p) for p, _ in _leaves(cli.build_parser())}
+        stale = {path for path in leaves if "memory" in path or "jobs" in path}
+        self.assertFalse(stale, f"memory/jobs leaves remain: {sorted(stale)}")
 
     def test_desk_desk_is_rejected(self):
         with self.assertRaises(SystemExit):

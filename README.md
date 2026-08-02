@@ -2,7 +2,7 @@
 
 [![Build](https://github.com/rundesk-ai/desk-cli/actions/workflows/build.yml/badge.svg)](https://github.com/rundesk-ai/desk-cli/actions/workflows/build.yml)
 
-**The full [Rundesk](https://rundesk.ai) API, from your terminal.** Projects, pages, tasks, weeks, assets, jobs, and the desk agent surface — all as simple subcommands, with your API keys stored safely on your machine.
+**The full [Rundesk](https://rundesk.ai) API, from your terminal.** Projects, pages, tasks, weeks, assets, and your desk — all as simple subcommands, with your API keys stored safely on your machine.
 
 No dependencies. If you have `python3` (3.9+), you're ready.
 
@@ -25,7 +25,7 @@ You'll be prompted for a name, base URL (just press Enter for `https://rundesk.a
 **3. Confirm it works:**
 
 ```bash
-desk whoami
+desk show
 ```
 
 That's it. You're connected.
@@ -37,12 +37,12 @@ That's it. You're connected.
 Every Rundesk endpoint is a subcommand. Reads print compact, human-friendly text by default — add `--json` when you want the raw payload. Anything destructive requires `--confirm`, so you can't delete something by accident.
 
 ```
-desk whoami                     # this desk's identity: brief, rules, jobs, projects
+desk show                       # this desk: identity, owner, and projects
 desk inbox                      # this desk's to-do (tasks + mentions)
 desk inbox --week 3             # ...for a specific week
 desk inbox --unscheduled        # ...just the unscheduled items
+desk mentions                   # unread mentions on this desk's tasks
 desk account | changelog        # the account behind the key
-desk jobs    list | get | create | update | delete
 desk projects list | get | create | update | archive | unarchive | delete
 desk page    list | get | create | update | patch | delete | reorder | search
 desk tasks   list | get | create | update | complete | uncomplete | restore |
@@ -56,7 +56,7 @@ desk desks   list | get | create | update | delete | retire | unretire |
 
 Not sure what a command does? `desk help` lists everything, and `desk help <command>` (e.g. `desk help tasks`) goes deeper.
 
-**What you can do depends on your key.** A **desk-bound** key works from a desk's point of view (`desk whoami`, `desk inbox`); an **owner** key manages desks themselves (`desk desks …`).
+**What you can do depends on your key.** A **desk-bound** key works from a desk's point of view (`desk show`, `desk inbox`, `desk mentions`); an **owner** key manages desks themselves (`desk desks …`).
 
 ## Profiles
 
@@ -123,6 +123,6 @@ Tests are standard-library only:
 - `python3 tests/test_cli.py` — walks every command against a fake transport.
 - `python3 tests/test_rundesk.py` — the REST client's request/response suite.
 
-Layout: `src/desk_cli/client.py` (REST client), `rundesk.py` (full-API command tree), `cli.py` (profiles, update, help, and the `desk whoami` / `desk inbox` surface).
+Layout: `src/desk_cli/client.py` (REST client), `rundesk.py` (full-API command tree), `cli.py` (profiles, update, help, and the `desk show` / `desk inbox` / `desk mentions` surface).
 
 To cut a release: bump `__version__` in `src/desk_cli/__init__.py` and tag `vX.Y.Z`.

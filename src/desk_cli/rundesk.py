@@ -3,16 +3,8 @@
 
 Usage:
   desk [--env-file PATH] <command> ...
-  desk whoami
   desk account [--json]
   desk changelog [--limit N] [--all]
-  desk desk show|memory [--json]
-  desk desk inbox [--week ID | --unscheduled] [--json]
-  desk desk memory-set [--memory TEXT | --clear]
-  desk desk memory-grep <pattern> [--context N] [--ignore-case] [--json]
-  desk desk memory-patch --mode replace|append|prepend [--old-str S] [--new-str S] [--content S] [--json]
-  desk jobs list [--search S] [--desk-id N] [--json]      jobs get <id> [--json]
-  desk jobs create --name N [--group G] [--manual M] | update <id> [...] | delete <id> --confirm
   desk projects list [--search S] [--type professional|personal] [--archived] [--json]
   desk projects get <id> [--json]
   desk projects create --name N [--short-code C] [--color #hex] [--type T]
@@ -38,9 +30,10 @@ Inputs:
   Reads RUNDESK_BASE_URL and RUNDESK_API_KEY from process env / local .env
   via client.py's dotenv-reuse loader (an already-set env var always wins). One
   key = one Rundesk workspace/desk actor (a workspace is provisioned per desk),
-  so there is no profile selection. The KEY decides the surface: a desk-bound key
-  may use `desk ...`; an owner key may use the `desks` MANAGEMENT verbs (the
-  other returns 403); `desks list|get` are read-only discovery any caller may use.
+  so there is no profile selection. The KEY decides the surface: only an owner
+  key may use the `desks` MANAGEMENT verbs (a desk-bound key gets 403); `desks
+  list|get` are read-only discovery any caller may use. The desk's own surface
+  (`show`/`inbox`/`mentions`) lives on the installed `desk` CLI in cli.py.
 
 Outputs:
   Compact pipe-delimited text where the API wires ?format=text; pages/desk JSON
@@ -105,21 +98,6 @@ def _parse_id_list(value: str | None) -> list[int] | None:
 
 
 # ── Account / changelog ──────────────────────────────────────────────────────
-def cmd_whoami(args, client: RundeskClient) -> int:
-    data = client.get_account()
-    if _wants_json(args):
-        _emit(data, True)
-        return 0
-    fields = data if isinstance(data, dict) else {}
-    line = (
-        "Rundesk account | "
-        f"id={fields.get('id', '-')} name={fields.get('name', '-')} "
-        f"email={fields.get('email', '-')} timezone={fields.get('timezone', '-')}"
-    )
-    print(line)
-    return 0
-
-
 def cmd_account(args, client: RundeskClient) -> int:
     _emit(client.get_account(as_text=not _wants_json(args)), _wants_json(args))
     return 0
@@ -127,60 +105,6 @@ def cmd_account(args, client: RundeskClient) -> int:
 
 def cmd_changelog(args, client: RundeskClient) -> int:
     _emit(client.get_changelog(limit=args.limit, all=args.all), True)
-    return 0
-
-
-# ── Desk (agent surface) ─────────────────────────────────────────────────────
-def cmd_desk(args, client: RundeskClient) -> int:
-    action = args.desk_action
-    as_text = not _wants_json(args)
-    if action == "show":
-        _emit(client.get_desk(as_text=as_text), _wants_json(args))
-    elif action == "inbox":
-        _emit(
-            client.get_desk_inbox(week=args.week, unscheduled=args.unscheduled, as_text=as_text),
-            _wants_json(args),
-        )
-    elif action == "memory":
-        _emit(client.get_desk_memory(as_text=as_text), _wants_json(args))
-    elif action == "memory-set":
-        memory = None if args.clear else args.memory
-        _emit(client.patch_desk_memory(memory), True)
-    elif action == "memory-grep":
-        _emit(
-            client.grep_desk_memory(
-                args.pattern, context=args.context, ignore_case=args.ignore_case, as_text=as_text
-            ),
-            _wants_json(args),
-        )
-    elif action == "memory-patch":
-        _emit(
-            client.patch_desk_memory_surgical(
-                mode=args.mode, old_str=args.old_str, new_str=args.new_str,
-                content=args.content, as_text=as_text,
-            ),
-            _wants_json(args),
-        )
-    return 0
-
-
-# ── Jobs (workspace-global manuals; reads open, writes owner-only) ────────────
-def cmd_jobs(args, client: RundeskClient) -> int:
-    action = args.jobs_action
-    if action == "list":
-        _emit(
-            client.list_jobs(search=args.search, desk_id=args.desk_id, as_text=not _wants_json(args)),
-            _wants_json(args),
-        )
-    elif action == "get":
-        _emit(client.get_job(args.job_id, as_text=not _wants_json(args)), _wants_json(args))
-    elif action == "create":
-        _emit(client.create_job(name=args.name, group=args.group, manual=args.manual), True)
-    elif action == "update":
-        _emit(client.update_job(args.job_id, name=args.name, group=args.group, manual=args.manual), True)
-    elif action == "delete":
-        client.delete_job(args.job_id)
-        print(f"deleted job {args.job_id}")
     return 0
 
 
@@ -410,8 +334,7 @@ def cmd_desks(args, client: RundeskClient) -> int:
     elif action == "create":
         _emit(
             client.create_desk(
-                name=args.name, brief=args.brief, rules=args.rules, memory=args.memory,
-                owner_type=args.owner_type, owner_actor_id=args.owner_actor_id,
+                name=args.name, owner_type=args.owner_type, owner_actor_id=args.owner_actor_id,
                 project_ids=_parse_id_list(args.project_ids),
             ),
             True,
@@ -419,8 +342,8 @@ def cmd_desks(args, client: RundeskClient) -> int:
     elif action == "update":
         _emit(
             client.update_desk(
-                args.desk_id, name=args.name, brief=args.brief, rules=args.rules, memory=args.memory,
-                owner_type=args.owner_type, owner_actor_id=args.owner_actor_id,
+                args.desk_id, name=args.name, owner_type=args.owner_type,
+                owner_actor_id=args.owner_actor_id,
                 project_ids=_parse_id_list(args.project_ids),
             ),
             True,
@@ -455,10 +378,6 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--json", action="store_true", help="Print raw JSON instead of text rows.")
 
     # account / changelog
-    p = sub.add_parser("whoami", help="Verify the key and print the bound account identity.")
-    add_json(p)
-    p.set_defaults(handler=cmd_whoami)
-
     p = sub.add_parser("account", help="Show the account record.")
     add_json(p)
     p.set_defaults(handler=cmd_account)
@@ -467,60 +386,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, help="1–50, default 3.")
     p.add_argument("--all", action="store_true", help="Return every entry.")
     p.set_defaults(handler=cmd_changelog)
-
-    # desk (agent surface)
-    desk = sub.add_parser("desk", help="Agent desk surface (desk-bound key).")
-    desk_sub = desk.add_subparsers(dest="desk_action", required=True)
-    d = desk_sub.add_parser("show", help="Whoami for the bound desk + projects[].")
-    add_json(d)
-    di = desk_sub.add_parser("inbox", help="This week's tasks + mentions (or a week / the unscheduled inbox).")
-    dig = di.add_mutually_exclusive_group()
-    dig.add_argument("--week", type=int, help="A task_weeks id (that week's tasks).")
-    dig.add_argument("--unscheduled", action="store_true", help="The desk's no-week inbox tasks.")
-    add_json(di)
-    dme = desk_sub.add_parser("memory", help="Show the desk Memory row.")
-    add_json(dme)
-    dm = desk_sub.add_parser("memory-set", help="Replace desk Memory in place.")
-    dm.add_argument("--memory", help="New memory text.")
-    dm.add_argument("--clear", action="store_true", help="Clear memory (send null).")
-    dmg = desk_sub.add_parser("memory-grep", help="Server-side regex grep over the desk Memory.")
-    dmg.add_argument("pattern", help="PCRE pattern (≤1000).")
-    dmg.add_argument("--context", type=int, help="0–10 lines around each match.")
-    dmg.add_argument("--ignore-case", dest="ignore_case", action="store_true")
-    add_json(dmg)
-    dmp = desk_sub.add_parser("memory-patch", help="Server-side surgical desk Memory edit.")
-    dmp.add_argument("--mode", required=True, choices=["replace", "append", "prepend"])
-    dmp.add_argument("--old-str", dest="old_str")
-    dmp.add_argument("--new-str", dest="new_str")
-    dmp.add_argument("--content")
-    add_json(dmp)
-    desk.set_defaults(handler=cmd_desk)
-
-    # jobs (workspace-global manuals; reads open to any key, writes owner-only)
-    jobs = sub.add_parser("jobs", help="Jobs (reads open; create/update/delete owner-key only).")
-    jb = jobs.add_subparsers(dest="jobs_action", required=True)
-    jl = jb.add_parser("list", help="List job manuals.")
-    jl.add_argument("--search", help="Match name/group.")
-    jl.add_argument("--desk-id", dest="desk_id", help="Restrict to a desk's attached jobs.")
-    add_json(jl)
-    jg = jb.add_parser("get", help="Single job (full manual).")
-    jg.add_argument("job_id")
-    add_json(jg)
-    jc = jb.add_parser("create", help="Create a job (owner key only).")
-    jc.add_argument("--name", required=True, help="≤255 (slug auto-derived).")
-    jc.add_argument("--group", help="Blank → \"General\".")
-    jc.add_argument("--manual", help="Manual markdown.")
-    add_json(jc)
-    ju = jb.add_parser("update", help="Partial update of a job (owner key only).")
-    ju.add_argument("job_id")
-    ju.add_argument("--name", help="≤255 (non-empty when present).")
-    ju.add_argument("--group")
-    ju.add_argument("--manual")
-    add_json(ju)
-    jd = jb.add_parser("delete", help="Soft-delete a job + detach from desks (requires --confirm).")
-    jd.add_argument("job_id")
-    jd.add_argument("--confirm", action="store_true")
-    jobs.set_defaults(handler=cmd_jobs)
 
     # projects
     projects = sub.add_parser("projects", help="Projects (list/get/create/update/archive/delete).")
@@ -755,9 +620,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_json(dsg)
 
     def add_desk_fields(sp):
-        sp.add_argument("--brief")
-        sp.add_argument("--rules")
-        sp.add_argument("--memory")
         sp.add_argument("--owner-type", dest="owner_type", choices=["person", "agent", "unassigned"])
         sp.add_argument("--owner-actor-id", dest="owner_actor_id", type=int, help="Existing actor to own the desk.")
         sp.add_argument("--project-ids", dest="project_ids", help="Comma-separated project ids (display order).")
@@ -797,7 +659,6 @@ _CONFIRM_GATED = {
     ("page", "delete"),
     ("tasks", "delete"),
     ("tasks", "comment-delete"),
-    ("jobs", "delete"),
     ("desks", "delete"),
     ("asset", "delete-task"),
     ("asset", "delete-project"),
