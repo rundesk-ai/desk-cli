@@ -132,4 +132,4 @@ if ! command -v desk >/dev/null 2>&1; then
 fi
 
 echo
-echo "Next: run  desk profile add  to store your Rundesk API key, then  desk whoami"
+echo "Next: run  desk profile add  to store your Rundesk API key, then  desk show"

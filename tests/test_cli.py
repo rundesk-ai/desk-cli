@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -49,7 +51,7 @@ LOCAL_COMMANDS = {"profile", "update", "uninstall", "help"}
 # Positional dests that should be filled with a numeric id rather than "x".
 ID_DESTS = {
     "project_id", "page_id", "task_id", "comment_id", "asset_id", "desk_id",
-    "job_id", "id", "ref", "week_id", "ids",
+    "id", "ref", "week_id", "ids",
 }
 
 # The few leaves whose client method validates arg combos before requesting:
@@ -203,8 +205,12 @@ class ApiEndpointCoverageTests(_TransportMixin):
 
     def test_every_client_method_reachable_from_command_tree(self):
         """No orphan endpoints: every public RundeskClient API method is invoked
-        by some handler in the command tree."""
-        source = (SRC / "rundesk.py").read_text(encoding="utf-8")
+        by some handler in the command tree. The tree spans two modules —
+        rundesk.py owns the full API groups, cli.py owns the desk-bound
+        surface (show/inbox/mentions)."""
+        source = "\n".join(
+            (SRC / name).read_text(encoding="utf-8") for name in ("rundesk.py", "cli.py")
+        )
         skip = {"build_url", "request", "request_multipart", "items"}
         methods = [
             name
@@ -234,26 +240,50 @@ class DeskSurfaceTests(_TransportMixin):
         self.assertEqual(rc, 0)
         self.assertIn("week=7", self.captured[0]["url"])
 
-    def test_whoami_is_the_desk_identity(self):
+    def test_mentions_is_top_level_and_hits_desk_mentions(self):
+        rc = cli.main(["mentions"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.captured[0]["url"].split("?")[0].endswith("/desk/mentions"))
+
+    def test_mentions_limit_is_sent(self):
+        rc = cli.main(["mentions", "--limit", "5"])
+        self.assertEqual(rc, 0)
+        url = self.captured[0]["url"]
+        self.assertTrue(url.split("?")[0].endswith("/desk/mentions"))
+        self.assertIn("limit=5", url)
+
+    def test_show_is_the_desk_identity(self):
+        rc = cli.main(["show"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.captured[0]["url"].split("?")[0].endswith("/desk"))
+
+    def test_whoami_still_works_as_a_hidden_alias_of_show(self):
         rc = cli.main(["whoami"])
         self.assertEqual(rc, 0)
         self.assertTrue(self.captured[0]["url"].split("?")[0].endswith("/desk"))
+
+    def test_whoami_is_not_advertised_in_help(self):
+        out = _capture_stdout(lambda: self.assertEqual(cli.main(["help"]), 0))
+        self.assertIn("show", out)  # the command that replaced it IS listed
+        self.assertNotIn("whoami", out)
 
     def test_account_is_the_account_record(self):
         rc = cli.main(["account"])
         self.assertEqual(rc, 0)
         self.assertTrue(self.captured[0]["url"].split("?")[0].endswith("/me"))
 
-    def test_desk_group_show_and_memory_removed(self):
+    def test_no_memory_or_jobs_leaf_survives(self):
         choices = _find_subparsers(cli.build_parser()).choices
         self.assertNotIn("desk", choices)  # no more `desk desk`
-        self.assertNotIn("show", choices)  # show dropped; whoami replaces it
-        self.assertIn("whoami", choices)
+        self.assertNotIn("jobs", choices)
+        self.assertIn("show", choices)
         self.assertIn("account", choices)
         self.assertIn("inbox", choices)
-        # No memory command survives anywhere in the tree.
-        leaf_names = {p[-1] for p, _ in _leaves(cli.build_parser())}
-        self.assertFalse({n for n in leaf_names if "memory" in n}, f"memory leaves remain: {leaf_names}")
+        self.assertIn("mentions", choices)
+        # Neither a memory nor a jobs leaf survives anywhere in the built tree.
+        leaves = {" ".join(p) for p, _ in _leaves(cli.build_parser())}
+        stale = {path for path in leaves if "memory" in path or "jobs" in path}
+        self.assertFalse(stale, f"memory/jobs leaves remain: {sorted(stale)}")
 
     def test_desk_desk_is_rejected(self):
         with self.assertRaises(SystemExit):
@@ -481,6 +511,96 @@ class UpdateRoutingTests(unittest.TestCase):
         with mock.patch.object(cli.updater, "run", return_value=0) as run:
             cli.main(["update"])
         run.assert_called_once_with(cli.REPO_ROOT, cli.__version__, check_only=False)
+
+
+class CatalogManifestTests(unittest.TestCase):
+    """This repository is also a Rundesk skill catalog: `manifest.json` at the root
+    plus a complete Agent Skill package per declared entry.
+
+    Rundesk validates a catalog on install and then *silently* ignores a package a
+    brain would not index — a name with an underscore, a frontmatter name that
+    disagrees with its directory, an over-long description. The failure mode is a
+    skill that installs and never fires, which nothing reports. So the same rules are
+    checked here, where a break is visible, rather than on somebody else's machine.
+    """
+
+    #: The catalog contract rundesk enforces (its `skill.ALLOWED`, `NAMED_LIMIT`,
+    #: `DESCRIBED_LIMIT`). Restated rather than imported: rundesk is a separate
+    #: install that is not here, and this repository is published without it.
+    ALLOWED_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+    NAME_LIMIT = 64
+    DESCRIPTION_LIMIT = 1024
+    SCHEMA = 1
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(__file__).resolve().parents[1]
+        cls.manifest = json.loads((cls.root / "manifest.json").read_text(encoding="utf-8"))
+
+    def test_manifest_version_tracks_the_package_version(self):
+        """One release, one number. A catalog whose version trails `__version__`
+        makes `rundesk skills update` refuse the newer repository as older."""
+        self.assertEqual(self.manifest["version"], cli.__version__)
+
+    def test_manifest_declares_a_valid_catalog(self):
+        self.assertEqual(self.manifest["schema"], self.SCHEMA)
+        self.assertRegex(self.manifest["name"], self.ALLOWED_NAME)
+        self.assertRegex(self.manifest["version"], r"^\d+\.\d+\.\d+$")
+        described = self.manifest["description"]
+        self.assertTrue(described.strip())
+        self.assertLessEqual(len(described), self.DESCRIPTION_LIMIT)
+        self.assertTrue(self.manifest["skills"], "a catalog declares at least one skill")
+
+    def test_every_declared_skill_is_a_complete_package(self):
+        for entry in self.manifest["skills"]:
+            name, declared = entry["name"], entry["path"]
+            with self.subTest(skill=name):
+                at = (self.root / declared).resolve()
+                self.assertIn(self.root, at.parents, "a skill path cannot leave the repository")
+                self.assertTrue(at.is_dir(), f"{declared} is not a directory")
+                self.assertEqual(at.name, name, "the directory and the manifest must agree")
+
+                page = at / "SKILL.md"
+                self.assertTrue(page.is_file(), f"{declared} has no SKILL.md")
+                said = _frontmatter(page.read_text(encoding="utf-8"))
+                self.assertIsNotNone(said, "SKILL.md must open with a --- frontmatter block")
+
+                # A brain indexes by the frontmatter name; a disagreement here is a
+                # skill that is present and unreachable.
+                self.assertEqual(said.get("name"), name)
+                self.assertRegex(name, self.ALLOWED_NAME)
+                self.assertLessEqual(len(name), self.NAME_LIMIT)
+
+                described = said.get("description") or ""
+                self.assertTrue(described.strip(), "the description is the whole of what a brain sees")
+                self.assertLessEqual(len(described), self.DESCRIPTION_LIMIT)
+
+    def test_the_repository_ships_no_undeclared_skill(self):
+        """A package added under `skills/` and left out of the manifest is never
+        installed — and looks installed to whoever added it."""
+        present = sorted(
+            one.name for one in (self.root / "skills").iterdir() if (one / "SKILL.md").is_file()
+        )
+        self.assertEqual(present, sorted(entry["name"] for entry in self.manifest["skills"]))
+
+
+def _frontmatter(text: str) -> dict | None:
+    """The `name` and `description` out of a SKILL.md, or None if there is no block.
+
+    Two scalars read by hand: the standard library has no YAML parser, and this is
+    exactly how rundesk reads the same file.
+    """
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    said: dict = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return said
+        what, _, rest = line.partition(":")
+        if rest and what.strip() in ("name", "description") and not what.startswith((" ", "\t")):
+            said[what.strip()] = rest.strip().strip("'\"")
+    return None
 
 
 def _capture_stdout(fn) -> str:
