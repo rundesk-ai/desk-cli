@@ -323,6 +323,10 @@ class PayloadShapingTests(unittest.TestCase):
         self.assertEqual(call["method"], "GET")
         self.assertEqual(call["path"], "/desk/mentions")
         self.assertNotIn("limit=", call["url"])
+        # Every read on this client returns the parsed payload when called bare;
+        # a lone method defaulting to text hands a library caller a string where
+        # its siblings hand back a dict, and nothing says so at the call site.
+        self.assertFalse(call["as_text"])
 
     def test_get_desk_mentions_limit(self):
         self.client.get_desk_mentions(limit=5)

@@ -416,9 +416,11 @@ class RundeskClient:
             params["unscheduled"] = 1
         return self.request("GET", Paths.desk_inbox, params=params or None, as_text=as_text)
 
-    def get_desk_mentions(self, limit: int | None = None, as_text: bool = True) -> Any:
+    def get_desk_mentions(self, limit: int | None = None, as_text: bool = False) -> Any:
         """GET /desk/mentions → unread @-mentions on this desk's tasks, newest
-        first (read-only, desk-bound key). `limit` 1–100 caps the result set."""
+        first (read-only, desk-bound key). `limit` 1–100 caps the result set.
+        Text mode renders the agent-facing rows; the default is the parsed payload,
+        as it is for every other read on this client."""
         params = _compact({"limit": limit})
         return self.request("GET", Paths.desk_mentions, params=params or None, as_text=as_text)
 
