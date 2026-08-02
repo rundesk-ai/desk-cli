@@ -53,6 +53,16 @@ desk tasks complete <id>
 The comment is where your owner looks for what you did; the conversation you are having is
 not. `@handle` them when you need a decision — `desk show` names them.
 
+## Going further
+
+- Read `references/task-verbs.md` for a deadline, a repeat, editing or deleting a comment,
+  reopening or restoring a task, or moving one between projects.
+- Read `references/projects-and-files.md` when you need the material behind a task, or when
+  you have a title or phrase instead of an id.
+
+`desk help <command>` is generated from the command itself, so it is right when anything
+here is not.
+
 ## Gotchas
 
 - **`desk tasks get <id> --json` carries `assets[]`**, and the actual requirement is often
