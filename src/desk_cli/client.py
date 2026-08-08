@@ -30,8 +30,8 @@ Outputs:
   `kind` that maps to a stable process exit code.
 
 Key surfaces:
-  - account, projects (+ pages, page search), tasks (+ deadline/recurring/move),
-    weeks, assets — the standard account-scoped surface.
+  - account, projects (+ pages, search/grep), tasks (+ deadline/recurring/move),
+    weeks, unified/parent-scoped assets — the standard account-scoped surface.
   - the DESK surface: an agent (desk-bound) key uses `/desk/...`; an owner key
     manages desks via `/desks/...`. The key decides which surface is permitted
     (the other returns 403).
@@ -108,6 +108,7 @@ class Paths:
     week = "/week"
     weeks = "/weeks"
     tasks = "/tasks"
+    assets = "/assets"
     pages_search = "/pages/search"
     project_assets_search = "/projects/assets/search"
 
@@ -115,6 +116,13 @@ class Paths:
     desk = "/desk"
     desk_inbox = "/desk/inbox"
     desk_mentions = "/desk/mentions"
+
+    # Human/user mention surface — a non-desk bearer acts for the signed-in
+    # person's inbox rather than the token actor itself.
+    user_mentions = "/mentions"
+    user_mentions_count = "/mentions/unread-count"
+    user_mentions_search = "/mentions/search"
+    user_mentions_read_all = "/mentions/read-all"
 
     # Owner desk-management surface.
     desks = "/desks"
@@ -144,12 +152,24 @@ class Paths:
         return f"/projects/{project_id}/pages/reorder"
 
     @staticmethod
+    def pages_grep(project_id: Any) -> str:
+        return f"/projects/{project_id}/pages/grep"
+
+    @staticmethod
     def page(project_id: Any, page_id: Any) -> str:
         return f"/projects/{project_id}/pages/{page_id}"
 
     @staticmethod
     def page_patch(project_id: Any, page_id: Any) -> str:
         return f"/projects/{project_id}/pages/{page_id}/patch"
+
+    @staticmethod
+    def user_mention_read(mention_id: Any) -> str:
+        return f"/mentions/{mention_id}/read"
+
+    @staticmethod
+    def user_mention_entity(type: str, entity_id: Any) -> str:
+        return f"/mentions/entity/{type}/{entity_id}"
 
     @staticmethod
     def task(task_id: Any) -> str:
@@ -380,10 +400,16 @@ class RundeskClient:
         `id|name|email|timezone` text row when `as_text`."""
         return self.request("GET", Paths.account, as_text=as_text)
 
-    def get_changelog(self, limit: int | None = None, all: bool = False) -> Any:
+    def get_changelog(
+        self,
+        limit: int | None = None,
+        all: bool = False,
+        major: int | None = None,
+    ) -> Any:
         """GET /changelog → `{data:[{version,date,body}], meta}` release notes,
-        newest first. `limit` 1–50 (default 3); `all=True` returns every entry."""
-        params = {"limit": limit, "all": 1 if all else None}
+        newest first. `limit` 1–50 (default 3); `all=True` returns every entry;
+        `major` narrows to one major release line."""
+        params = {"limit": limit, "all": 1 if all else None, "major": major}
         return self.request("GET", Paths.changelog, params=params)
 
     # ── Desk surface (agent / desk-bound key) ────────────────────────────────
@@ -424,6 +450,65 @@ class RundeskClient:
         params = _compact({"limit": limit})
         return self.request("GET", Paths.desk_mentions, params=params or None, as_text=as_text)
 
+    # ── Human/user mentions (non-desk bearer surface) ───────────────────────
+    def list_user_mentions(
+        self,
+        unread: bool = False,
+        per_page: int | None = None,
+        page: int | None = None,
+    ) -> Any:
+        """GET /mentions → the signed-in human identity's paginated inbox."""
+        params = {
+            "unread": 1 if unread else None,
+            "per_page": per_page,
+            "page": page,
+        }
+        return self.request("GET", Paths.user_mentions, params=params)
+
+    def get_user_mentions_count(self) -> Any:
+        """GET /mentions/unread-count → ``{count}`` for the human inbox."""
+        return self.request("GET", Paths.user_mentions_count)
+
+    def search_user_mention_targets(
+        self,
+        q: str | None = None,
+        types: str | None = None,
+        limit: int | None = None,
+        project_id: Any | None = None,
+        task_id: Any | None = None,
+    ) -> Any:
+        """GET /mentions/search → visible page, task, and actor targets."""
+        params = {
+            "q": q,
+            "types": types,
+            "limit": limit,
+            "project_id": project_id,
+            "task_id": task_id,
+        }
+        return self.request("GET", Paths.user_mentions_search, params=params)
+
+    def list_entity_mentions(
+        self,
+        type: str,
+        entity_id: Any,
+        per_page: int | None = None,
+        page: int | None = None,
+    ) -> Any:
+        """GET /mentions/entity/{type}/{id} → incoming mentions for an entity."""
+        return self.request(
+            "GET",
+            Paths.user_mention_entity(type, entity_id),
+            params={"per_page": per_page, "page": page},
+        )
+
+    def mark_user_mention_read(self, mention_id: Any) -> Any:
+        """POST /mentions/{mention}/read → mark one human mention read."""
+        return self.request("POST", Paths.user_mention_read(mention_id))
+
+    def mark_all_user_mentions_read(self) -> Any:
+        """POST /mentions/read-all → clear the human inbox's unread state."""
+        return self.request("POST", Paths.user_mentions_read_all)
+
     # ── Projects ────────────────────────────────────────────────────────────
     def list_projects(
         self,
@@ -435,6 +520,7 @@ class RundeskClient:
         sort: str | None = None,
         sort_order: int | None = None,
         as_text: bool = False,
+        desk_id: Any | None = None,
     ) -> Any:
         """GET /projects → the parsed JSON list payload (or `id|name|type|files`
         text rows when `as_text`). `search` is name-scoped; `type` is
@@ -447,12 +533,21 @@ class RundeskClient:
             "page": page,
             "sort": sort,
             "sort_order": sort_order,
+            "desk_id": desk_id,
         }
         return self.request("GET", Paths.projects, params=params, as_text=as_text)
 
-    def get_project(self, project_id: Any, as_text: bool = False) -> Any:
+    def get_project(
+        self,
+        project_id: Any,
+        as_text: bool = False,
+        desk_id: Any | None = None,
+    ) -> Any:
         """GET /projects/{id} → single project + asset list (dict), or text."""
-        return self.request("GET", Paths.project(project_id), as_text=as_text)
+        params = {"desk_id": desk_id} if desk_id is not None else None
+        return self.request(
+            "GET", Paths.project(project_id), params=params, as_text=as_text,
+        )
 
     def create_project(
         self,
@@ -462,11 +557,17 @@ class RundeskClient:
         type: str | None = None,
         is_hidden: bool | None = None,
         index_pages: bool | None = None,
+        desk_id: Any | None = None,
     ) -> Any:
         """POST /projects → 201 project (auto-seeds a starter page; the response
-        strips short_code; `desk_id` is not settable here). `name` ≤255,
-        `short_code` ≤20, `color` hex, `type` professional|personal."""
-        payload = _project_payload(name, short_code, color, type, is_hidden, index_pages)
+        strips short_code). `desk_id` optionally targets an owner-visible desk.
+        New projects always begin with page indexing enabled. The retained
+        `is_hidden`/`index_pages` arguments protect the 0.2 call signature, but
+        retired or impossible values fail instead of reporting false success."""
+        _validate_legacy_project_options(is_hidden, index_pages, creating=True)
+        payload = _project_payload(name, short_code, color, type)
+        if desk_id is not None:
+            payload["desk_id"] = desk_id
         return self.request("POST", Paths.projects, payload=payload)
 
     def update_project(
@@ -479,9 +580,12 @@ class RundeskClient:
         is_hidden: bool | None = None,
         index_pages: bool | None = None,
     ) -> Any:
-        """PUT /projects/{id} → partial update (same fields as create). Returns
-        the updated project."""
-        payload = _project_payload(name, short_code, color, type, is_hidden, index_pages)
+        """PUT /projects/{id} → partial update. Page indexing can be toggled;
+        the retired `is_hidden` argument is rejected rather than ignored."""
+        _validate_legacy_project_options(is_hidden, index_pages, creating=False)
+        payload = _project_payload(name, short_code, color, type)
+        if index_pages is not None:
+            payload["index_pages"] = index_pages
         return self.request("PUT", Paths.project(project_id), payload=payload)
 
     def delete_project(self, project_id: Any) -> Any:
@@ -510,6 +614,9 @@ class RundeskClient:
         include_body: bool = False,
         frontmatter_only: bool = False,
         body_chars: int | None = None,
+        search: str | None = None,
+        per_page: int | None = None,
+        page: int | None = None,
     ) -> Any:
         """GET /projects/{p}/pages → parsed JSON list of pages (JSON-only). Each
         item carries id, title, sort_order, updated_at, assets_count,
@@ -523,6 +630,7 @@ class RundeskClient:
           body off (the server flag lives on the single-page GET via `get_page`).
         """
         params: dict[str, Any] = {}
+        params.update({"search": search, "per_page": per_page, "page": page})
         if meta:
             params["meta"] = json.dumps(meta, separators=(",", ":"), sort_keys=True)
         if include_body and not frontmatter_only:
@@ -564,6 +672,9 @@ class RundeskClient:
         body: str | None = None,
         frontmatter: str | None = None,
         description: str | None = None,
+        parent_page_id: Any | None = None,
+        sort_order: int | None = None,
+        set_parent: bool = False,
     ) -> Any:
         """PUT /projects/{p}/pages/{page} → full update, three shapes: `body`
         alone (full replace incl. any kept frontmatter), `frontmatter` alone
@@ -577,6 +688,10 @@ class RundeskClient:
             payload["frontmatter"] = frontmatter
         if description is not None:
             payload["description"] = description
+        if parent_page_id is not None or set_parent:
+            payload["parent_page_id"] = parent_page_id
+        if sort_order is not None:
+            payload["sort_order"] = sort_order
         return self.request("PUT", Paths.page(project_id, page_id), payload=payload)
 
     def patch_page(
@@ -622,10 +737,30 @@ class RundeskClient:
         ("A project must have at least one page.")."""
         return self.request("DELETE", Paths.page(project_id, page_id))
 
-    def reorder_pages(self, project_id: Any, ids: list[Any]) -> Any:
-        """PATCH /projects/{p}/pages/reorder → set page order. `ids` must be the
-        project's page ids, unique and all owned by the user (422 otherwise)."""
-        return self.request("PATCH", Paths.pages_reorder(project_id), payload={"ids": ids})
+    def reorder_pages(
+        self,
+        project_id: Any,
+        ids: list[Any] | None = None,
+        parent_page_id: Any | None = None,
+        scopes: list[dict[str, Any]] | None = None,
+    ) -> Any:
+        """PATCH /projects/{p}/pages/reorder using complete sibling scopes.
+
+        `ids` preserves the released single-scope call and defaults to top-level;
+        pass `parent_page_id` for one child scope. `scopes` exposes the complete
+        API for multi-scope moves.
+        """
+        if scopes is not None and (ids is not None or parent_page_id is not None):
+            raise RundeskError(
+                "usage", "--scopes cannot be combined with sibling ids or --parent",
+            )
+        if scopes is None:
+            if ids is None:
+                raise RundeskError("usage", "page reorder requires ids or scopes")
+            scopes = [{"parent_page_id": parent_page_id, "ids": ids}]
+        return self.request(
+            "PATCH", Paths.pages_reorder(project_id), payload={"scopes": scopes},
+        )
 
     def search_pages(
         self,
@@ -633,13 +768,50 @@ class RundeskClient:
         project_type: str,
         project_id: Any | None = None,
         limit: int | None = None,
+        page_id: Any | None = None,
     ) -> Any:
         """GET /pages/search → `{results:[...]}` semantic+keyword content search.
         `q` 3–500 chars (under 8 → keyword only); `project_type` required
         (professional|personal, scopes the search); `project_id` narrows;
-        `limit` 1–25 (default 5)."""
-        params = {"q": q, "project_type": project_type, "project_id": project_id, "limit": limit}
+        `page_id` narrows within that project; `limit` 1–25 (default 5)."""
+        params = {
+            "q": q,
+            "project_type": project_type,
+            "project_id": project_id,
+            "page_id": page_id,
+            "limit": limit,
+        }
         return self.request("GET", Paths.pages_search, params=params)
+
+    def grep_pages(
+        self,
+        project_id: Any,
+        pattern: str,
+        page_id: Any | None = None,
+        ignore_case: bool = False,
+        context: int | None = None,
+        max_count: int | None = None,
+        max_pages: int | None = None,
+        count_only: bool = False,
+        as_text: bool = False,
+    ) -> Any:
+        """GET /projects/{project}/pages/grep → regex matches over page prose.
+
+        ``page_id`` narrows to one page. The remaining options mirror grep's
+        case, context, per-page match, page-count, and count-only controls.
+        """
+        params = {
+            "pattern": pattern,
+            "page_id": page_id,
+            "ignore_case": 1 if ignore_case else None,
+            "context": context,
+            "max_count": max_count,
+            "max_pages": max_pages,
+            "count_only": 1 if count_only else None,
+        }
+        return self.request(
+            "GET", Paths.pages_grep(project_id), params=params, as_text=as_text,
+        )
 
     # ── Tasks ────────────────────────────────────────────────────────────────
     def list_tasks(
@@ -654,6 +826,8 @@ class RundeskClient:
         per_page: int | None = None,
         page: int | None = None,
         as_text: bool = False,
+        desk_id: Any | None = None,
+        is_flagged: int | None = None,
     ) -> Any:
         """GET /tasks → parsed JSON list (or `id|title|status|project_id|week_id|
         due|files` text rows when `as_text`). `status` todo/done;
@@ -664,7 +838,9 @@ class RundeskClient:
             "project_id": project_id,
             "task_week_id": task_week_id,
             "inbox": inbox,
+            "desk_id": desk_id,
             "is_recurring_template": is_recurring_template,
+            "is_flagged": is_flagged,
             "sort": sort,
             "sort_order": sort_order,
             "per_page": per_page,
@@ -682,11 +858,20 @@ class RundeskClient:
         body: str | None = None,
         project_id: Any | None = None,
         task_week_id: Any | None = None,
+        desk_id: Any | None = None,
+        is_flagged: bool | None = None,
     ) -> Any:
         """POST /tasks → create. `title` ≤500; omit `task_week_id` for inbox.
         Returns the created task."""
         payload = _compact(
-            {"title": title, "body": body, "project_id": project_id, "task_week_id": task_week_id}
+            {
+                "title": title,
+                "body": body,
+                "project_id": project_id,
+                "task_week_id": task_week_id,
+                "desk_id": desk_id,
+                "is_flagged": is_flagged,
+            }
         )
         return self.request("POST", Paths.tasks, payload=payload)
 
@@ -836,18 +1021,29 @@ class RundeskClient:
         return self.request("DELETE", Paths.task_comment(task_id, comment_id))
 
     # ── Weeks ────────────────────────────────────────────────────────────────
-    def get_week(self, date: str | None = None, as_text: bool = False) -> Any:
+    def get_week(
+        self,
+        date: str | None = None,
+        as_text: bool = False,
+        desk_id: Any | None = None,
+    ) -> Any:
         """GET /week (current) or /weeks/{YYYY-MM-DD} → tasks grouped by project,
         split todo/done. Text mode emits the `week|...` / `project|task_id|...`
         block."""
         path = Paths.week_for(date) if date else Paths.week
-        return self.request("GET", path, as_text=as_text)
+        return self.request("GET", path, params={"desk_id": desk_id}, as_text=as_text)
 
-    def list_weeks(self, past: int | None = None, future: int | None = None, as_text: bool = False) -> Any:
+    def list_weeks(
+        self,
+        past: int | None = None,
+        future: int | None = None,
+        as_text: bool = False,
+        desk_id: Any | None = None,
+    ) -> Any:
         """GET /weeks → weeks with completion stats (`id|starts_at|ends_at|
         completed|total` in text mode). `past`/`future` window (bounded by
         rundesk.weeks_ahead, default 52)."""
-        params = {"past": past, "future": future}
+        params = {"past": past, "future": future, "desk_id": desk_id}
         return self.request("GET", Paths.weeks, params=params, as_text=as_text)
 
     # ── Assets (polymorphic: tasks, projects, pages) ─────────────────────────
@@ -855,6 +1051,48 @@ class RundeskClient:
         """GET /assets/{id} → single asset by id (no parent context). Text files
         carry full `content`; binaries have `content=null` + a `note` pointer."""
         return self.request("GET", Paths.asset(asset_id), as_text=as_text)
+
+    def list_assets(
+        self,
+        filename: str | None = None,
+        task_id: Any | None = None,
+        project_id: Any | None = None,
+        page_id: Any | None = None,
+        sort: str | None = None,
+        page: int | None = None,
+        per_page: int | None = None,
+        as_text: bool = False,
+    ) -> Any:
+        """GET /assets → recent assets across task, project, and page parents.
+
+        ``filename`` is a substring filter. At most one parent id should be
+        supplied; the CLI enforces that before this method is called.
+        """
+        params = {
+            "filename": filename,
+            "task_id": task_id,
+            "project_id": project_id,
+            "page_id": page_id,
+            "sort": sort,
+            "page": page,
+            "per_page": per_page,
+        }
+        return self.request("GET", Paths.assets, params=params, as_text=as_text)
+
+    def update_asset(
+        self,
+        asset_id: Any,
+        filename: str | None = None,
+        content: str | None = None,
+        encoding: str | None = None,
+    ) -> Any:
+        """PATCH /assets/{asset} → rename and/or replace an asset directly."""
+        if filename is None and content is None:
+            raise RundeskError("usage", "asset update requires --filename or content.")
+        payload = _compact(
+            {"filename": filename, "content": content, "encoding": encoding}
+        )
+        return self.request("PATCH", Paths.asset(asset_id), payload=payload)
 
     def list_project_assets(
         self,
@@ -933,9 +1171,9 @@ class RundeskClient:
     # ── Desk discovery + owner desk-management surface (`/desks`) ─────────────
     def list_desks(self, include_retired: bool = False, as_text: bool = False) -> Any:
         """GET /desks → the desks the caller may view (a desk-bound key sees only
-        its own desk; a human/owner key sees every desk). Read-only discovery —
-        desk MANAGEMENT below is owner-gated. `include_retired=True` adds retired
-        desks."""
+        its own desk; a Member key sees its assigned desk; owner/admin keys see
+        every desk). Read-only discovery — desk MANAGEMENT below is owner-gated.
+        `include_retired=True` adds retired desks."""
         params = {"include_retired": 1} if include_retired else None
         return self.request("GET", Paths.desks, params=params, as_text=as_text)
 
@@ -950,13 +1188,25 @@ class RundeskClient:
         owner_type: str | None = None,
         owner_actor_id: int | None = None,
         project_ids: list[int] | None = None,
+        *,
+        assignee_type: str | None = None,
+        assignee_actor_id: int | None = None,
+        owner_id: int | None = None,
+        brief: str | None = None,
+        rules: str | None = None,
+        memory: str | None = None,
     ) -> Any:
-        """POST /desks → create a desk (owner key only). `name` ≤255;
-        `owner_type` person|agent|unassigned, with `owner_actor_id` naming an
-        EXISTING actor to own the desk; `project_ids` the managed projects in
-        display order. (Minting a brand-new agent owner is web-UI-only — the API
-        ignores `new_agent_name`.) Returns the created desk."""
-        payload = _desk_payload(name, owner_type, owner_actor_id, project_ids)
+        """POST /desks → create a desk (owner key only). `assignee_type` and
+        `assignee_actor_id` seat an existing person/agent; `owner_id` is the
+        responsible human for an agent desk. The old `owner_type` and
+        `owner_actor_id` keywords remain aliases for source compatibility."""
+        assignee_type, assignee_actor_id = _resolve_desk_assignment(
+            assignee_type, assignee_actor_id, owner_type, owner_actor_id,
+        )
+        payload = _desk_payload(
+            name, assignee_type, assignee_actor_id, owner_id, project_ids,
+            brief, rules, memory,
+        )
         return self.request("POST", Paths.desks, payload=payload)
 
     def update_desk(
@@ -966,10 +1216,23 @@ class RundeskClient:
         owner_type: str | None = None,
         owner_actor_id: int | None = None,
         project_ids: list[int] | None = None,
+        *,
+        assignee_type: str | None = None,
+        assignee_actor_id: int | None = None,
+        owner_id: int | None = None,
+        brief: str | None = None,
+        rules: str | None = None,
+        memory: str | None = None,
     ) -> Any:
-        """PUT /desks/{desk} → partial update (same fields as create). Lifecycle is
-        via retire_desk/unretire_desk, not a field here."""
-        payload = _desk_payload(name, owner_type, owner_actor_id, project_ids)
+        """PUT /desks/{desk} → partial assignment/project update. Legacy
+        `owner_type`/`owner_actor_id` keywords map to the assignee fields."""
+        assignee_type, assignee_actor_id = _resolve_desk_assignment(
+            assignee_type, assignee_actor_id, owner_type, owner_actor_id,
+        )
+        payload = _desk_payload(
+            name, assignee_type, assignee_actor_id, owner_id, project_ids,
+            brief, rules, memory,
+        )
         return self.request("PUT", Paths.desk_by_id(desk_id), payload=payload)
 
     def delete_desk(self, desk_id: Any) -> Any:
@@ -1059,37 +1322,78 @@ def _project_payload(
     short_code: str | None,
     color: str | None,
     type: str | None,
-    is_hidden: bool | None,
-    index_pages: bool | None,
 ) -> dict[str, Any]:
-    """Shape the shared project payload (create + update — same fields)."""
+    """Shape fields shared by project create and update."""
     return _compact(
         {
             "name": name,
             "short_code": short_code,
             "color": color,
             "type": type,
-            "is_hidden": is_hidden,
-            "index_pages": index_pages,
         }
     )
 
 
+def _validate_legacy_project_options(
+    is_hidden: bool | None,
+    index_pages: bool | None,
+    creating: bool,
+) -> None:
+    """Reject released flags the current API cannot honor."""
+    if is_hidden is not None:
+        raise RundeskError(
+            "usage",
+            "project visibility was retired; --hidden is no longer supported",
+        )
+    if creating and index_pages is False:
+        raise RundeskError(
+            "usage",
+            "new projects always enable page indexing; create it, then use "
+            "`projects update <id> --no-index-pages`",
+        )
+
+
+def _resolve_desk_assignment(
+    assignee_type: str | None,
+    assignee_actor_id: int | None,
+    owner_type: str | None,
+    owner_actor_id: int | None,
+) -> tuple[str | None, int | None]:
+    """Map 0.2 owner-named aliases to the API's assignee fields."""
+    if assignee_type is not None and owner_type is not None:
+        raise RundeskError("usage", "choose --assignee-type or --owner-type, not both")
+    if assignee_actor_id is not None and owner_actor_id is not None:
+        raise RundeskError(
+            "usage", "choose --assignee-actor-id or --owner-actor-id, not both",
+        )
+    resolved_type = assignee_type if assignee_type is not None else owner_type
+    resolved_actor_id = (
+        assignee_actor_id if assignee_actor_id is not None else owner_actor_id
+    )
+    return resolved_type, resolved_actor_id
+
+
 def _desk_payload(
     name: str | None,
-    owner_type: str | None = None,
-    owner_actor_id: int | None = None,
+    assignee_type: str | None = None,
+    assignee_actor_id: int | None = None,
+    owner_id: int | None = None,
     project_ids: list[int] | None = None,
+    brief: str | None = None,
+    rules: str | None = None,
+    memory: str | None = None,
 ) -> dict[str, Any]:
-    """Shape the shared desk payload (create + update — same accepted fields).
-    `new_agent_name` is deliberately absent: the API validates but ignores it
-    (minting a new agent owner is web-UI-only)."""
+    """Shape the shared desk assignment and project payload."""
     return _compact(
         {
             "name": name,
-            "owner_type": owner_type,
-            "owner_actor_id": owner_actor_id,
+            "assignee_type": assignee_type,
+            "assignee_actor_id": assignee_actor_id,
+            "owner_id": owner_id,
             "project_ids": project_ids,
+            "brief": brief,
+            "rules": rules,
+            "memory": memory,
         }
     )
 

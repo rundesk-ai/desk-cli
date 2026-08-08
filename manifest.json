@@ -1,12 +1,6 @@
 {
   "schema": 1,
   "name": "desk-cli",
-  "version": "0.2.0",
-  "description": "Managing a Rundesk desk's tasks from the command line.",
-  "skills": [
-    {
-      "name": "managing-your-desk",
-      "path": "skills/managing-your-desk"
-    }
-  ]
+  "version": "0.3.0",
+  "description": "Manage Rundesk tasks, desks, projects, pages, mentions, and assets with desk-cli."
 }

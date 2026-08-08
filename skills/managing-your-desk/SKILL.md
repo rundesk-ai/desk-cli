@@ -1,75 +1,70 @@
 ---
 name: managing-your-desk
-description: Manage your tasks and inbox within rundesk using the `desk` cli. Use for anything about this desk's work — what is on the plate for this week, what is due, what is unanswered, and creating, mentioned, completing or commenting on tasks.
+description: Use when managing Rundesk work for a desk or its owner: tasks or tickets, inbox, mentions, weeks, projects, pages, page search or grep, assets, comments, deadlines, and recurring work. It supplies the profile-safe desk-cli workflow for finding full context, acting with the correct desk or owner identity, and reporting outcomes. Do not use it to install, configure, or operate the Rundesk gateway, agents, channels, or skill catalogs.
 ---
 
-# Managing desk tasks
+# Manage Rundesk work
 
-Your work is on a desk in Rundesk. The desk is resolved from your key: there is no id to
-pass and no other desk you can reach.
+Use `desk` for the Rundesk API. The skill catalog does not install that binary; if
+`command -v desk` fails or `desk --version` is below 0.3.0, stop and tell the owner to install or
+update desk-cli.
 
-## Start here
-
-```sh
-desk inbox        # this week's tasks, their latest comments, and your unread mentions
-```
-
-One call, and the answer to "what am I working on". Do not rebuild it out of
-`desk tasks list`. `desk show` names the desk, its owner, and its projects.
-
-## Weeks are buckets, not dates
-
-A task sits in exactly one week — Mon–Sun, numbered — or in none, which is the backlog.
-
-| Need | Command |
-|---|---|
-| Week ids and their dates | `desk weeks` |
-| Another week's tasks | `desk inbox --week <id>` |
-| The backlog | `desk inbox --unscheduled` |
-| Move one | `desk tasks move-week <id> --week-id <id>`, or `--inbox` |
-
-`desk tasks create --title "…"` with no `--week-id` lands in the **backlog**, not this week.
-
-**Do not guess a week.** "This week" or a date resolves through `desk weeks`; no timing
-signal means the backlog; a batch that could span weeks is a question for your owner. A
-task filed into the wrong week is invisible until somebody goes looking for it.
-
-## Mentions are how work reaches you
+## Select the identity first
 
 ```sh
-desk mentions
+"$RUNDESK_COMMAND" skills profiles desk-cli/managing-your-desk
 ```
 
-There is no mark-as-read. **Commenting on the task is what clears its mention** — so one
-you decide not to answer stays unanswered, and stays visible.
+Prefer a complete named profile matching `$RUNDESK_AGENT` case-insensitively. Use another profile
+only when the request names it or the owner selects it. If several remain plausible, ask; never
+silently fall back to an owner profile. Read [profiles and identity](references/profiles-and-identity.md)
+for profile selection, the required account/show probes, or owner-mode targeting.
 
-## Reporting back
+For the commands below, use `desk --env-profile <name>` for a named Rundesk profile. Use plain
+`desk` only when the owner explicitly selected the complete default profile.
 
-```sh
-desk tasks comment <id> "…"      # body is positional, not a flag
-desk tasks complete <id>
-```
+## Orient and collect full context
 
-The comment is where your owner looks for what you did; the conversation you are having is
-not. `@handle` them when you need a decision — `desk show` names them.
+Run `account --json`, then probe `show --json` with the selected command prefix:
 
-## Going further
+- `show` succeeds: desk mode. Start with `inbox`; use `mentions` for unread mentions.
+- The account succeeds but `show` is forbidden: human/user mode. Read `workspace.role` from
+  `account --json`, then use `desks list --json` to discover only desks visible to that role.
+  Owner/admin profiles may target any returned desk; a Member profile may act only through its one
+  assigned desk, and a deskless Member has mention access but no task/project desk scope. Use
+  `user-mentions list --unread` for the signed-in human's inbox. This is separate from mentions
+  addressed directly to the API-token actor.
 
-- Read `references/task-verbs.md` for a deadline, a repeat, editing or deleting a comment,
-  reopening or restoring a task, or moving one between projects.
-- Read `references/projects-and-files.md` when you need the material behind a task, or when
-  you have a title or phrase instead of an id.
+When given a task or ticket id, run `tasks get <id> --json`. Read its body, comments, project,
+week, deadline, and every `assets[]` item. Run `asset get <asset_id>` for each attachment; read text
+content inline and immediately download/open a binary's short-lived `download_url`. Do not answer
+about attached requirements without opening them.
 
-`desk help <command>` is generated from the command itself, so it is right when anything
-here is not.
+## Work and report
 
-## Gotchas
+- In desk mode, `inbox` is the current week's task/mention view; `inbox --unscheduled` is the
+  backlog. Do not rebuild that view from task lists.
+- In human/user mode, target only a desk returned by `desks list --json`; pass its id to
+  desk-targetable task, project, and week commands. Never read or create work against an implicit desk.
+- In human/user mode, use `user-mentions count|list|entity|search` to inspect the human inbox. Mark
+  one or all mentions read only when the request authorizes that state change.
+- Search before fetching when no id is given. Fetch the selected task/page/asset in full before
+  editing it.
+- Comment the outcome with `tasks comment <id> "…"`, then complete the task only when the requested
+  work is actually finished. Commenting is what clears a desk mention; there is no mark-read verb.
+- Resolve explicit timing through `weeks`; without a timing signal create in the inbox. Ask rather
+  than guess when a batch could span weeks.
 
-- **`desk tasks get <id> --json` carries `assets[]`**, and the actual requirement is often
-  in there rather than in the body. Open each with `desk asset get <id>` before answering:
-  text comes back inline, a binary comes back as a short-lived `download_url`.
-- **Your rules and memory are not on the desk.** They are `AGENTS.md` and `MEMORY.md` in
-  your own home. The desk carries tasks and projects and nothing about you, so do not go
-  looking there for how you are meant to work.
-- **Completing is how you finish a task, never deleting.** Every destructive verb needs
-  `--confirm` and is your owner's call, not yours.
+Read [task verbs](references/task-verbs.md) for scheduling, deadlines, recurrence, filtering,
+comments, moves, restores, and write authority. Read [projects, pages, and assets](references/projects-and-files.md)
+when locating or changing project material, using page search/grep/patch, or replacing an asset.
+Read [owner desk management](references/owner-and-desks.md) before creating, assigning, retiring,
+or deleting desks. Never mint credentials from an agent turn; ask the owner to run that credential
+operation locally.
+
+## Guard writes
+
+Reads are safe. Run create/update/patch/move/comment/complete/archive/upload/rename/recurrence
+verbs only when the request authorizes the corresponding change. Hard deletes require `--confirm`
+and explicit owner authorization. Completing is how work finishes; deleting is not. Use
+`desk help <group> <verb>` for the exact current flags.

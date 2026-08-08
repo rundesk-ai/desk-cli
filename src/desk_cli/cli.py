@@ -7,6 +7,8 @@ a personal, installable CLI needs on top of the raw API:
 
   * ``desk profile …`` — manage local API credentials (multiple named profiles),
     plus a global ``--profile NAME`` to target one for a single command,
+  * ``desk --env-profile NAME …`` — use one complete Rundesk-injected suffixed
+    environment profile without mixing it with saved/default credentials,
   * ``desk update`` / ``desk uninstall`` / ``desk help``, and the desk-bound
     surface itself: ``desk show`` (identity, owner, projects), ``desk inbox``,
     and ``desk mentions``.
@@ -117,10 +119,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.prog = "desk"
     parser.description = "desk — a command-line client for the Rundesk API."
     parser.add_argument("--version", action="version", version=f"desk {__version__}")
-    parser.add_argument(
+    credential_profile = parser.add_mutually_exclusive_group()
+    credential_profile.add_argument(
         "--profile",
         help="Use a specific saved profile for this command (overrides the default). "
         "Place it before the subcommand, e.g. `desk --profile work tasks list`.",
+    )
+    credential_profile.add_argument(
+        "--env-profile",
+        help="Use one complete Rundesk-injected environment profile, e.g. "
+        "RUNDESK_API_KEY__ALAN (+ optional matching base URL).",
     )
 
     # The rundesk.py parser exposes --env-file for the single-.env model; profiles
@@ -163,8 +171,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also delete all saved profiles/credentials in ~/.config/desk.",
     )
 
-    help_cmd = sub.add_parser("help", help="Show help for desk, or for a specific command (`desk help tasks`).")
-    help_cmd.add_argument("topic", nargs="?", help="A command to show help for; omit for the full command list.")
+    help_cmd = sub.add_parser(
+        "help",
+        help="Show help for desk or a nested command (`desk help tasks move-week`).",
+    )
+    help_cmd.add_argument(
+        "topic", nargs="*", help="A command path to show help for; omit for the full list."
+    )
 
     # A bare `desk` (no command) prints help instead of erroring.
     sub.required = False
@@ -357,16 +370,104 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
 
 def cmd_help(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
-    """`desk help [topic]` — the full command list, or one command's help."""
-    topic = getattr(args, "topic", None)
-    if not topic:
+    """``desk help [group [verb]]`` — full, group, or leaf help."""
+    topics = getattr(args, "topic", None) or []
+    if not topics:
         parser.print_help()
         return 0
-    target = _subparsers(parser).choices.get(topic)
-    if target is None:
-        print(f"desk: no such command {topic!r}. Run `desk help` for the command list.", file=sys.stderr)
-        return 2
+
+    target = parser
+    walked = []
+    for topic in topics:
+        try:
+            choices = _subparsers(target).choices
+        except RuntimeError:
+            choices = {}
+        target = choices.get(topic)
+        walked.append(topic)
+        if target is None:
+            path = " ".join(walked)
+            print(
+                f"desk: no such command path {path!r}. Run `desk help` for the command list.",
+                file=sys.stderr,
+            )
+            return 2
     target.print_help()
+    return 0
+
+
+def _mint_key_to_profile(
+    args: argparse.Namespace,
+    client: RundeskClient,
+    base_url: str,
+) -> int:
+    """Mint one desk key directly into the protected profile store.
+
+    The API returns the credential once. Never route that response through the
+    normal JSON emitter: keys may be stored, but must not appear on stdout.
+    """
+    profile_name = args.save_profile.strip()
+    if not profile_name:
+        raise RundeskError("usage", "--save-profile requires a non-empty name.")
+    cfg = profiles.load_config()
+    if profile_name in cfg.get("profiles", {}):
+        raise RundeskError(
+            "usage",
+            f"profile {profile_name!r} already exists; remove it explicitly before replacing its key.",
+        )
+
+    try:
+        # Prove the protected destination can be written before making the
+        # irreversible API call. The second atomic save still owns the token.
+        profiles.save_config(cfg)
+    except OSError as exc:
+        raise RundeskError(
+            "usage", f"profile store is not writable; no key was minted: {exc}",
+        ) from exc
+
+    result = client.create_desk_key(
+        args.desk_id, name=args.name, expires_at=args.expires_at,
+    )
+    token = result.get("plain_text_token") if isinstance(result, dict) else None
+    if not isinstance(token, str) or not token:
+        raise RundeskError(
+            "unknown",
+            "Rundesk minted a key but returned no credential to store; revoke that desk key immediately.",
+        )
+
+    try:
+        # Another process may change profiles while the API request is in
+        # flight. Save with compare-and-swap; a conflict reloads, preserves the
+        # other writer, chooses another name if needed, and retries.
+        saved_name = profile_name
+        for _attempt in range(5):
+            cfg = profiles.load_config()
+            saved_name = profile_name
+            if saved_name in cfg.get("profiles", {}):
+                stem = f"{profile_name}-minted"
+                saved_name = stem
+                suffix = 2
+                while saved_name in cfg.get("profiles", {}):
+                    saved_name = f"{stem}-{suffix}"
+                    suffix += 1
+            profiles.add_profile(cfg, saved_name, base_url, token)
+            try:
+                profiles.save_config(cfg)
+            except profiles.ConfigConflict:
+                continue
+            break
+        else:
+            raise profiles.ConfigConflict()
+    except (RundeskError, OSError) as exc:
+        raise RundeskError(
+            "unknown",
+            "a key was minted but could not be stored; revoke that desk key in Rundesk immediately: "
+            f"{exc}",
+        ) from exc
+    print(
+        f"Saved minted desk key as profile {saved_name!r} "
+        f"(key={profiles.mask_key(token)})."
+    )
     return 0
 
 
@@ -390,8 +491,13 @@ def _dispatch(args: argparse.Namespace) -> int:
     try:
         if (args.command, action) in api._CONFIRM_GATED:
             api._confirm_or_abort(args)
-        base_url, api_key = profiles.resolve_credentials(getattr(args, "profile", None))
+        base_url, api_key = profiles.resolve_credentials(
+            getattr(args, "profile", None),
+            env_profile=getattr(args, "env_profile", None),
+        )
         client = RundeskClient(base_url=base_url, api_key=api_key)
+        if args.command == "desks" and action == "mint-key":
+            return _mint_key_to_profile(args, client, base_url)
         return args.handler(args, client)
     except RundeskError as exc:
         print(f"desk: {exc}", file=sys.stderr)

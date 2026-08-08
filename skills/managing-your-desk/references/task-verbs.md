@@ -16,9 +16,10 @@ desk tasks deadline-remove <id>
 ## Repeats
 
 ```sh
-desk tasks recur-set <id> --frequency daily|weekly|monthly|yearly --interval N \
+desk tasks recur-set <id> --frequency daily|weekly|monthly --interval N \
     --end-type never|count|date [--end-count N] [--end-date YYYY-MM-DD] \
-    [--days-of-week mon,wed] [--day-of-month N] [--start-at …] [--due-time …] [--due-weekday …]
+    [--days-of-week 1 3] [--day-of-month N] [--start-at YYYY-MM-DD] \
+    [--due-time HH:MM | --due-all-day] [--due-weekday 1]
 desk tasks recur-update <id> …     # same flags; changes the rule going forward
 desk tasks recur-remove <id>       # stops future occurrences, keeps what exists
 ```
@@ -36,6 +37,23 @@ desk tasks comment-delete <id> <comment_id> --confirm
 
 Editing or deleting a comment does not re-raise a mention it cleared.
 
+## Mentions
+
+Desk-bound profiles use `desk mentions`; posting the task reply clears the desk actor's waiting
+mention. Non-desk profiles use the signed-in human inbox:
+
+```sh
+desk user-mentions count
+desk user-mentions list --unread
+desk user-mentions entity task <id>
+desk user-mentions search --q "alex" --types actor
+desk user-mentions read <mention_id>
+desk user-mentions read-all
+```
+
+`read` and `read-all` change shared read state. Use them only when explicitly authorized or after
+the requested mention has been handled; inspecting a mention does not authorize clearing it.
+
 ## Undo and moving
 
 ```sh
@@ -51,7 +69,26 @@ completing is how you finish work.
 ## Filtering
 
 ```sh
-desk tasks list --status todo|done --project-id N --week-id N --inbox --json
+desk tasks list [--desk-id N] [--status todo|done] [--project-id N] \
+    [--week-id N | --inbox] [--recurring-template | --not-recurring-template] \
+    [--flagged | --not-flagged] [--sort FIELD] [--sort-order -1|1] \
+    [--page N] [--per-page N] [--json]
 ```
 
 `--week-id` and `--inbox` are mutually exclusive; the API rejects both together.
+
+## Scheduling and owner targeting
+
+Weeks are Monday–Sunday buckets with numeric ids. Resolve dates with `desk weeks`; move with exactly
+one destination: `tasks move-week <id> --week-id <id>` or `--inbox`. No timing signal means inbox;
+ask when timing is ambiguous.
+
+A non-desk credential targets only a desk returned by `desks list --json` and passes `--desk-id` when
+listing or creating desk work. Owner/admin roles may see several desks; a Member may see only its assigned
+desk or none. A desk-bound credential is already scoped and cannot act for another desk.
+
+## Write authority
+
+Create, update, move, comment, complete, deadline, and recurrence verbs change shared Rundesk state;
+run only the changes the request authorizes. Delete and comment-delete additionally require
+`--confirm` and explicit owner authorization.

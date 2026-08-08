@@ -42,21 +42,37 @@ desk inbox                      # this desk's to-do (tasks + mentions)
 desk inbox --week 3             # ...for a specific week
 desk inbox --unscheduled        # ...just the unscheduled items
 desk mentions                   # unread mentions on this desk's tasks
+desk user-mentions list         # signed-in human inbox for a non-desk key
 desk account | changelog        # the account behind the key
 desk projects list | get | create | update | archive | unarchive | delete
-desk page    list | get | create | update | patch | delete | reorder | search
+desk page    list | get | create | update | patch | delete | reorder | search | grep
 desk tasks   list | get | create | update | complete | uncomplete | restore |
              delete | move-week | move-project | deadline-set | deadline-remove |
              recur-set | recur-update | recur-remove | comments | comment | …
 desk week | weeks
-desk asset   get | search | list-project | list-page | upload-* | rename-* | delete-*
+desk asset   get | list | update | search | list-project | list-page | upload-* |
+             rename-* | delete-*
 desk desks   list | get | create | update | delete | retire | unretire |
-             attach | detach | mint-key
+             attach | detach | mint-key --save-profile NAME
 ```
 
-Not sure what a command does? `desk help` lists everything, and `desk help <command>` (e.g. `desk help tasks`) goes deeper.
+Not sure what a command does? `desk help` lists everything, and hierarchical help reaches any leaf:
+`desk help tasks move-week` is equivalent to `desk tasks move-week --help`.
 
-**What you can do depends on your key.** A **desk-bound** key works from a desk's point of view (`desk show`, `desk inbox`, `desk mentions`); an **owner** key manages desks themselves (`desk desks …`).
+**What you can do depends on your key and workspace role.** A **desk-bound** key works from a desk's point of view (`desk show`, `desk inbox`, `desk mentions`). Any **non-desk** member key can use the signed-in person's mention inbox (`desk user-mentions …`); owner/admin keys additionally manage desks (`desk desks …`) and target account-wide work. The human inbox is distinct from mentions addressed directly to the API-token actor.
+
+Project page indexing is automatic on create and can be changed with
+`desk projects update <id> --index-pages|--no-index-pages`. The released
+`--hidden` project flag is retained only to return an actionable retirement
+error. Desk assignment uses `--assignee-type`, `--assignee-actor-id`, and—for an
+agent desk—`--owner-id`; the old `--owner-type`/`--owner-actor-id` spellings are
+compatible aliases.
+
+Desk `--brief`, `--rules`, and `--memory` fields remain API-write-compatible, but do not configure
+an agent; rundesk-cli keeps agent instructions and memory in that agent's home.
+`desks mint-key` writes the one-time credential directly into a new protected local profile and
+prints only its masked suffix. It refuses an existing destination before minting; if another process
+claims that name during the request, it preserves both profiles under a unique `-minted` name.
 
 ## Profiles
 
@@ -72,6 +88,11 @@ A profile is a saved API key with a name. You can have as many as you like — o
 | `desk profile local [name]` | Bind the current directory to a profile via a `.desk-profile` file (`--clear` to remove). |
 
 Your credentials live in a `chmod 600` file at `${XDG_CONFIG_HOME:-~/.config}/desk/config.json`, and keys are never shown in full.
+
+Rundesk can also inject named skill profiles as suffixed environment variables. Select one explicitly
+with `desk --env-profile NAME <command>`. It reads only `RUNDESK_API_KEY__NAME` and the optional matching
+`RUNDESK_BASE_URL__NAME`; it never borrows an unsuffixed or saved value. `--env-profile` and the saved
+`--profile` selector are mutually exclusive.
 
 **Which profile does a command use?** First match wins:
 
@@ -92,6 +113,8 @@ Several agents (or people) can share a single install, each with their own ident
   cd /work/agent-b && desk profile local agent-b
   ```
 - **Per command:** `desk --profile agent-b tasks list`.
+- **Rundesk skill profile:** `desk --env-profile agent_b tasks list` reads the complete injected
+  `__AGENT_B` environment set without consulting saved profiles.
 - **Full isolation:** give each agent its own `XDG_CONFIG_HOME` for a completely separate config.
 
 ## Teaching an agent to use it
@@ -101,10 +124,14 @@ This repository is also a **Rundesk skill catalog**. If you run agents with [`ru
 ```bash
 rundesk skills install https://github.com/rundesk-ai/desk-cli            # preview
 rundesk skills install https://github.com/rundesk-ai/desk-cli --confirm  # install
-rundesk skills grant <agent> managing-your-desk
+rundesk skills grant <agent> desk-cli/managing-your-desk
 ```
 
-`managing-your-desk` teaches an agent to run its desk's tasks: `desk inbox` for the week's work and unread mentions, how Rundesk's numbered week buckets and backlog behave, and that reporting back means a comment on the task.
+`managing-your-desk` teaches an agent to select its exact Rundesk environment profile, distinguish a
+desk-bound identity from a human/user identity, and manage tasks, inbox, mentions, weeks, projects,
+pages, page search/grep/patch, and assets without silently acting through the wrong desk. Non-desk profiles
+can manage the signed-in human's mention inbox; owner/admin profiles can explicitly target and administer
+desks; desk profiles read their own desk actor's mentions.
 
 Installing the catalog does not install `desk` itself — do that first, with the one-liner at the top of this README.
 
