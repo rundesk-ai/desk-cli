@@ -37,6 +37,21 @@ That's it. You're connected.
 
 <sub>The installer downloads into `~/.desk` and symlinks `desk` into `/usr/local/bin` (or `~/.local/bin`). No git, no clone. If `~/.local/bin` isn't on your PATH, the installer tells you the one line to add.</sub>
 
+### Give Rundesk agents the desk skill
+
+[Rundesk CLI](https://github.com/rundesk-ai/rundesk-cli) installs and grants the compact
+`managing-your-desk` skill from this repository:
+
+```bash
+"$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli
+"$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli --confirm
+"$RUNDESK_COMMAND" skills grant <agent> desk-cli/managing-your-desk
+```
+
+The first install command previews the catalog; the confirmed command installs it. Install the
+`desk` executable once on the machine, then keep one named desk profile per agent so each agent
+uses its own scoped identity.
+
 ## Everyday use
 
 Every Rundesk endpoint is a subcommand. Reads print compact, human-friendly text by default — add `--json` when you want the raw payload. Anything destructive requires `--confirm`, so you can't delete something by accident.
