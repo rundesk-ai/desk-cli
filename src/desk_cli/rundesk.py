@@ -15,15 +15,17 @@ Usage:
   desk page update <project_id> <page_id> [--body-file F] [--frontmatter F] [--description D]
   desk page patch <project_id> <page_id> --mode replace|append|prepend [--old-str ..] [--new-str ..] [--content ..]
   desk page delete <project_id> <page_id> --confirm
-  desk page search --q Q --project-type professional|personal [--project-id N] [--limit N]
+  desk page search --q Q --project-type professional|personal [--project-id N] [--page-id N] [--limit N]
+  desk page grep <project_id> --pattern REGEX [--page-id N] [--count-only]
   desk tasks list [--status todo|done] [--project-id N] [--week-id N] [--inbox] [--json]
   desk tasks get <id> | create --title T [...] | update <id> [...] | complete|uncomplete|restore <id>
   desk tasks comments <id> | comment <id> <body> | comment-edit <id> <comment_id> <body> | comment-delete <id> <comment_id> --confirm
   desk tasks delete <id> --confirm | move-week <id> [--week-id N|--inbox] | move-project <id> [--project-id N|--none]
   desk tasks deadline-set <id> --due-at ISO [--all-day] | deadline-remove <id>
   desk tasks recur-set|recur-update <id> --frequency F --interval N --end-type T [...] | recur-remove <id>
+  desk user-mentions list|count|search|entity|read|read-all
   desk week [--date YYYY-MM-DD] [--json]      weeks [--past N] [--future N] [--json]
-  desk asset get <id> | search --q Q | list-project <pid> | list-page <pid> <page> | upload-* | rename-* | delete-*
+  desk asset get <id> | list [--filename S] | update <id> [...] | search --q Q | list-project <pid> | list-page <pid> <page> | upload-* | rename-* | delete-*
   desk desks list|get|create|update|delete|retire|unretire|attach|detach|mint-key
 
 Inputs:
@@ -48,6 +50,7 @@ This is a debugging seam; programmatic callers import client.RundeskClient.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import sys
 from pathlib import Path
@@ -97,6 +100,24 @@ def _parse_id_list(value: str | None) -> list[int] | None:
     return ids or None
 
 
+def _read_asset_content(args: argparse.Namespace) -> tuple[str | None, str | None]:
+    """Read asset replacement content and return ``(content, encoding)``."""
+    source = getattr(args, "content_file", None)
+    encoding = getattr(args, "encoding", None)
+    if source:
+        path = Path(source)
+        try:
+            if encoding == "base64":
+                return base64.b64encode(path.read_bytes()).decode("ascii"), "base64"
+            return path.read_text(encoding="utf-8"), "utf8"
+        except (OSError, UnicodeError) as exc:
+            raise RundeskError(
+                "usage", f"--content-file not readable as {encoding or 'utf8'}: {source}: {exc}"
+            ) from exc
+    content = getattr(args, "content", None)
+    return content, (encoding or "utf8") if content is not None else None
+
+
 # ── Account / changelog ──────────────────────────────────────────────────────
 def cmd_account(args, client: RundeskClient) -> int:
     _emit(client.get_account(as_text=not _wants_json(args)), _wants_json(args))
@@ -104,7 +125,41 @@ def cmd_account(args, client: RundeskClient) -> int:
 
 
 def cmd_changelog(args, client: RundeskClient) -> int:
-    _emit(client.get_changelog(limit=args.limit, all=args.all), True)
+    _emit(client.get_changelog(limit=args.limit, all=args.all, major=args.major), True)
+    return 0
+
+
+# ── Human/user mentions ─────────────────────────────────────────────────────
+def cmd_user_mentions(args, client: RundeskClient) -> int:
+    action = args.user_mentions_action
+    if action == "list":
+        _emit(
+            client.list_user_mentions(
+                unread=args.unread, per_page=args.per_page, page=args.page,
+            ),
+            True,
+        )
+    elif action == "count":
+        _emit(client.get_user_mentions_count(), True)
+    elif action == "search":
+        _emit(
+            client.search_user_mention_targets(
+                q=args.q, types=args.types, limit=args.limit,
+                project_id=args.project_id, task_id=args.task_id,
+            ),
+            True,
+        )
+    elif action == "entity":
+        _emit(
+            client.list_entity_mentions(
+                args.type, args.entity_id, per_page=args.per_page, page=args.page,
+            ),
+            True,
+        )
+    elif action == "read":
+        _emit(client.mark_user_mention_read(args.mention_id), True)
+    elif action == "read-all":
+        _emit(client.mark_all_user_mentions_read(), True)
     return 0
 
 
@@ -115,17 +170,25 @@ def cmd_projects(args, client: RundeskClient) -> int:
         is_archived = 1 if args.archived else None
         _emit(
             client.list_projects(
-                search=args.search, type=args.type, is_archived=is_archived, as_text=not _wants_json(args)
+                search=args.search, type=args.type, is_archived=is_archived,
+                per_page=args.per_page, page=args.page, sort=args.sort,
+                sort_order=args.sort_order, desk_id=args.desk_id,
+                as_text=not _wants_json(args),
             ),
             _wants_json(args),
         )
     elif action == "get":
-        _emit(client.get_project(args.project_id, as_text=not _wants_json(args)), _wants_json(args))
+        _emit(
+            client.get_project(
+                args.project_id, as_text=not _wants_json(args), desk_id=args.desk_id,
+            ),
+            _wants_json(args),
+        )
     elif action == "create":
         _emit(
             client.create_project(
                 name=args.name, short_code=args.short_code, color=args.color, type=args.type,
-                is_hidden=args.hidden, index_pages=args.index_pages,
+                is_hidden=args.hidden, index_pages=args.index_pages, desk_id=args.desk_id,
             ),
             True,
         )
@@ -159,7 +222,14 @@ def cmd_page(args, client: RundeskClient) -> int:
                 raise RundeskError("usage", f"--meta is not valid JSON: {exc}") from exc
         elif args.role:
             meta = {"page_role": args.role}
-        _emit(client.get_pages(args.project_id, meta=meta, include_body=args.body), True)
+        _emit(
+            client.get_pages(
+                args.project_id, meta=meta, include_body=args.body,
+                body_chars=args.body_chars, search=args.search,
+                per_page=args.per_page, page=args.page,
+            ),
+            True,
+        )
     elif action == "get":
         _emit(client.get_page(args.project_id, args.page_id, frontmatter_only=args.frontmatter_only), True)
     elif action == "create":
@@ -174,6 +244,8 @@ def cmd_page(args, client: RundeskClient) -> int:
             client.update_page(
                 args.project_id, args.page_id, body=_read_body(args),
                 frontmatter=args.frontmatter, description=args.description,
+                parent_page_id=args.parent, sort_order=args.sort_order,
+                set_parent=args.top_level,
             ),
             True,
         )
@@ -189,13 +261,38 @@ def cmd_page(args, client: RundeskClient) -> int:
         client.delete_page(args.project_id, args.page_id)
         print(f"deleted page {args.page_id}")
     elif action == "reorder":
-        _emit(client.reorder_pages(args.project_id, [int(i) for i in args.ids]), True)
+        scopes = None
+        if args.scopes:
+            try:
+                scopes = json.loads(args.scopes)
+            except json.JSONDecodeError as exc:
+                raise RundeskError("usage", f"--scopes is not valid JSON: {exc}") from exc
+            if not isinstance(scopes, list):
+                raise RundeskError("usage", "--scopes must be a JSON array")
+        ids = args.ids or None
+        _emit(
+            client.reorder_pages(
+                args.project_id, ids, parent_page_id=args.parent, scopes=scopes,
+            ),
+            True,
+        )
     elif action == "search":
         _emit(
             client.search_pages(
-                q=args.q, project_type=args.project_type, project_id=args.project_id, limit=args.limit
+                q=args.q, project_type=args.project_type, project_id=args.project_id,
+                limit=args.limit, page_id=args.page_id,
             ),
             True,
+        )
+    elif action == "grep":
+        _emit(
+            client.grep_pages(
+                args.project_id, pattern=args.pattern, page_id=args.page_id,
+                ignore_case=args.ignore_case, context=args.context,
+                max_count=args.max_count, max_pages=args.max_pages,
+                count_only=args.count_only, as_text=not _wants_json(args),
+            ),
+            _wants_json(args),
         )
     return 0
 
@@ -207,7 +304,11 @@ def cmd_tasks(args, client: RundeskClient) -> int:
         _emit(
             client.list_tasks(
                 status=args.status, project_id=args.project_id, task_week_id=args.week_id,
-                inbox=1 if args.inbox else None, as_text=not _wants_json(args),
+                inbox=1 if args.inbox else None, desk_id=args.desk_id,
+                is_recurring_template=args.is_recurring_template,
+                is_flagged=args.is_flagged, sort=args.sort, sort_order=args.sort_order,
+                per_page=args.per_page, page=args.page,
+                as_text=not _wants_json(args),
             ),
             _wants_json(args),
         )
@@ -216,14 +317,17 @@ def cmd_tasks(args, client: RundeskClient) -> int:
     elif action == "create":
         _emit(
             client.create_task(
-                title=args.title, body=args.body, project_id=args.project_id, task_week_id=args.week_id
+                title=args.title, body=args.body, project_id=args.project_id,
+                task_week_id=args.week_id, desk_id=args.desk_id,
+                is_flagged=args.is_flagged,
             ),
             True,
         )
     elif action == "update":
         _emit(
             client.update_task(
-                args.task_id, title=args.title, body=args.body, project_id=args.project_id
+                args.task_id, title=args.title, body=args.body, project_id=args.project_id,
+                is_flagged=args.is_flagged,
             ),
             True,
         )
@@ -265,7 +369,7 @@ def cmd_tasks(args, client: RundeskClient) -> int:
                 args.task_id, frequency=args.frequency, interval=args.interval, end_type=args.end_type,
                 days_of_week=days, day_of_month=args.day_of_month, end_count=args.end_count,
                 end_date=args.end_date, start_at=args.start_at, due_time=args.due_time,
-                due_weekday=args.due_weekday,
+                due_weekday=args.due_weekday, due_all_day=args.due_all_day,
             ),
             True,
         )
@@ -277,12 +381,23 @@ def cmd_tasks(args, client: RundeskClient) -> int:
 
 # ── Weeks ────────────────────────────────────────────────────────────────────
 def cmd_week(args, client: RundeskClient) -> int:
-    _emit(client.get_week(date=args.date, as_text=not _wants_json(args)), _wants_json(args))
+    _emit(
+        client.get_week(
+            date=args.date, desk_id=args.desk_id, as_text=not _wants_json(args),
+        ),
+        _wants_json(args),
+    )
     return 0
 
 
 def cmd_weeks(args, client: RundeskClient) -> int:
-    _emit(client.list_weeks(past=args.past, future=args.future, as_text=not _wants_json(args)), _wants_json(args))
+    _emit(
+        client.list_weeks(
+            past=args.past, future=args.future, desk_id=args.desk_id,
+            as_text=not _wants_json(args),
+        ),
+        _wants_json(args),
+    )
     return 0
 
 
@@ -293,6 +408,25 @@ def cmd_asset(args, client: RundeskClient) -> int:
         _emit(client.get_asset(args.asset_id), True)
     elif action == "search":
         _emit(client.search_project_assets(q=args.q, sort=args.sort, limit=args.limit), True)
+    elif action == "list":
+        _emit(
+            client.list_assets(
+                filename=args.filename, task_id=args.task_id,
+                project_id=args.project_id, page_id=args.page_id,
+                sort=args.sort, page=args.page, per_page=args.per_page,
+                as_text=not _wants_json(args),
+            ),
+            _wants_json(args),
+        )
+    elif action == "update":
+        content, encoding = _read_asset_content(args)
+        _emit(
+            client.update_asset(
+                args.asset_id, filename=args.filename,
+                content=content, encoding=encoding,
+            ),
+            True,
+        )
     elif action == "list-project":
         _emit(client.list_project_assets(args.project_id, search=args.search, sort=args.sort, page=args.page), True)
     elif action == "list-page":
@@ -334,17 +468,20 @@ def cmd_desks(args, client: RundeskClient) -> int:
     elif action == "create":
         _emit(
             client.create_desk(
-                name=args.name, owner_type=args.owner_type, owner_actor_id=args.owner_actor_id,
-                project_ids=_parse_id_list(args.project_ids),
+                name=args.name, assignee_type=args.assignee_type,
+                assignee_actor_id=args.assignee_actor_id, owner_id=args.owner_id,
+                project_ids=_parse_id_list(args.project_ids), brief=args.brief,
+                rules=args.rules, memory=args.memory,
             ),
             True,
         )
     elif action == "update":
         _emit(
             client.update_desk(
-                args.desk_id, name=args.name, owner_type=args.owner_type,
-                owner_actor_id=args.owner_actor_id,
-                project_ids=_parse_id_list(args.project_ids),
+                args.desk_id, name=args.name, assignee_type=args.assignee_type,
+                assignee_actor_id=args.assignee_actor_id, owner_id=args.owner_id,
+                project_ids=_parse_id_list(args.project_ids), brief=args.brief,
+                rules=args.rules, memory=args.memory,
             ),
             True,
         )
@@ -360,7 +497,11 @@ def cmd_desks(args, client: RundeskClient) -> int:
     elif action == "detach":
         _emit(client.detach_project(args.desk_id, args.project_id), True)
     elif action == "mint-key":
-        _emit(client.create_desk_key(args.desk_id, name=args.name, expires_at=args.expires_at), True)
+        raise RundeskError(
+            "usage",
+            "mint-key must run through the installed `desk` command so the token "
+            "can be stored without printing it.",
+        )
     return 0
 
 
@@ -377,6 +518,21 @@ def build_parser() -> argparse.ArgumentParser:
     def add_json(p):
         p.add_argument("--json", action="store_true", help="Print raw JSON instead of text rows.")
 
+    def add_boolean_pair(
+        p, dest, enabled, disabled, enabled_help, disabled_help, query=False,
+    ):
+        enabled_value = 1 if query else True
+        disabled_value = 0 if query else False
+        group = p.add_mutually_exclusive_group()
+        group.add_argument(
+            enabled, dest=dest, action="store_const", const=enabled_value,
+            default=None, help=enabled_help,
+        )
+        group.add_argument(
+            disabled, dest=dest, action="store_const", const=disabled_value,
+            help=disabled_help,
+        )
+
     # account / changelog
     p = sub.add_parser("account", help="Show the account record.")
     add_json(p)
@@ -385,7 +541,36 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("changelog", help="Show release notes (newest first).")
     p.add_argument("--limit", type=int, help="1–50, default 3.")
     p.add_argument("--all", action="store_true", help="Return every entry.")
+    p.add_argument("--major", type=int, help="Only one major release line.")
     p.set_defaults(handler=cmd_changelog)
+
+    # Human/user mentions — non-desk workspace-member bearer surface. The existing
+    # top-level `mentions` command in cli.py stays the desk-agent read.
+    user_mentions = sub.add_parser(
+        "user-mentions",
+        help="Signed-in human mention inbox for a non-desk credential.",
+    )
+    um = user_mentions.add_subparsers(dest="user_mentions_action", required=True)
+    uml = um.add_parser("list", help="List incoming mentions for the signed-in human.")
+    uml.add_argument("--unread", action="store_true", help="Only unread mentions.")
+    uml.add_argument("--per-page", dest="per_page", type=int, help="Rows per page (1–100).")
+    uml.add_argument("--page", type=int, help="Pagination page.")
+    um.add_parser("count", help="Show the human inbox's unread count.")
+    ums = um.add_parser("search", help="Search visible targets before writing a mention.")
+    ums.add_argument("--q", help="Title, name, or numeric id (empty returns recent targets).")
+    ums.add_argument("--types", help="CSV subset of page,task,actor (default page,task).")
+    ums.add_argument("--limit", type=int, help="Maximum results (1–50).")
+    ums.add_argument("--project-id", dest="project_id", help="Project editor context.")
+    ums.add_argument("--task-id", dest="task_id", help="Task comment context.")
+    ume = um.add_parser("entity", help="List incoming mentions for one visible entity.")
+    ume.add_argument("type", choices=["task", "page", "actor", "project"])
+    ume.add_argument("entity_id")
+    ume.add_argument("--per-page", dest="per_page", type=int, help="Rows per page (1–100).")
+    ume.add_argument("--page", type=int, help="Pagination page.")
+    umr = um.add_parser("read", help="Mark one human mention read.")
+    umr.add_argument("mention_id")
+    um.add_parser("read-all", help="Mark every unread human mention read.")
+    user_mentions.set_defaults(handler=cmd_user_mentions)
 
     # projects
     projects = sub.add_parser("projects", help="Projects (list/get/create/update/archive/delete).")
@@ -394,20 +579,34 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--search", help="Name-scoped search filter.")
     pl.add_argument("--type", choices=["professional", "personal"], help="Filter by type.")
     pl.add_argument("--archived", action="store_true", help="Only archived projects.")
+    pl.add_argument("--desk-id", dest="desk_id", help="Owner/admin: filter to one desk.")
+    pl.add_argument("--sort", help="Sort field (default sort_order).")
+    pl.add_argument("--sort-order", dest="sort_order", type=int, choices=[-1, 1])
+    pl.add_argument("--per-page", dest="per_page", type=int, help="Rows per page (max 100).")
+    pl.add_argument("--page", type=int, help="Pagination page.")
     add_json(pl)
     pg = pj.add_parser("get", help="Single project + asset list.")
     pg.add_argument("project_id")
+    pg.add_argument("--desk-id", dest="desk_id", help="Owner/admin: scope file counts to one desk.")
     add_json(pg)
 
     def add_project_fields(sp):
         sp.add_argument("--short-code", dest="short_code", help="≤20 chars.")
         sp.add_argument("--color", help="Hex, e.g. #ff0000.")
         sp.add_argument("--type", choices=["professional", "personal"], help="Project type.")
-        sp.add_argument("--hidden", action="store_true", default=None, help="Mark hidden.")
+        sp.add_argument(
+            "--hidden", action="store_true", default=None,
+            help="Retired compatibility flag; returns a usage error.",
+        )
         sp.add_argument("--index-pages", dest="index_pages", action="store_true", default=None, help="Enable indexing.")
+        sp.add_argument(
+            "--no-index-pages", dest="index_pages", action="store_false",
+            help="Disable indexing (update only; create returns a usage error).",
+        )
 
     pc = pj.add_parser("create", help="Create a project (auto-seeds a starter page).")
     pc.add_argument("--name", required=True, help="≤255 chars.")
+    pc.add_argument("--desk-id", dest="desk_id", help="Owner/admin: attach to this desk.")
     add_project_fields(pc)
     pu = pj.add_parser("update", help="Partial update of a project.")
     pu.add_argument("project_id")
@@ -429,6 +628,10 @@ def build_parser() -> argparse.ArgumentParser:
     pll.add_argument("--role", help="Filter by frontmatter page_role.")
     pll.add_argument("--meta", help="Frontmatter containment filter as JSON.")
     pll.add_argument("--body", action="store_true", help="Include body_preview.")
+    pll.add_argument("--body-chars", dest="body_chars", type=int, help="Preview length (1–512).")
+    pll.add_argument("--search", help="Filter page titles and bodies.")
+    pll.add_argument("--per-page", dest="per_page", type=int, help="Rows per page (max 100).")
+    pll.add_argument("--page", type=int, help="Pagination page.")
     pgg = pa.add_parser("get", help="Single page (full body + children).")
     pgg.add_argument("project_id")
     pgg.add_argument("page_id")
@@ -446,6 +649,13 @@ def build_parser() -> argparse.ArgumentParser:
     puu.add_argument("--body-file", dest="body_file", help="Read body from a file.")
     puu.add_argument("--frontmatter", help="YAML (no --- fences); '' clears.")
     puu.add_argument("--description", help="Version-row label (≤255).")
+    parent = puu.add_mutually_exclusive_group()
+    parent.add_argument("--parent", help="Move under this parent page id.")
+    parent.add_argument(
+        "--top-level", dest="top_level", action="store_true",
+        help="Move out of a parent to the top level.",
+    )
+    puu.add_argument("--sort-order", dest="sort_order", type=int)
     ppp = pa.add_parser("patch", help="Surgical page edit.")
     ppp.add_argument("project_id")
     ppp.add_argument("page_id")
@@ -458,14 +668,32 @@ def build_parser() -> argparse.ArgumentParser:
     pdd.add_argument("project_id")
     pdd.add_argument("page_id")
     pdd.add_argument("--confirm", action="store_true")
-    prr = pa.add_parser("reorder", help="Reorder all pages.")
+    prr = pa.add_parser("reorder", help="Reorder one or more complete sibling scopes.")
     prr.add_argument("project_id")
-    prr.add_argument("ids", nargs="+", help="Page ids in desired order.")
+    prr.add_argument(
+        "ids", nargs="*", type=int,
+        help="Page ids in desired order for one scope.",
+    )
+    prr.add_argument("--parent", help="Parent id for the positional sibling scope.")
+    prr.add_argument(
+        "--scopes", help="JSON array of {parent_page_id,ids} scopes for cross-scope moves.",
+    )
     pss = pa.add_parser("search", help="Content search across pages.")
     pss.add_argument("--q", required=True, help="Free-text query (3–500 chars).")
     pss.add_argument("--project-type", dest="project_type", required=True, choices=["professional", "personal"])
     pss.add_argument("--project-id", dest="project_id", help="Narrow to one project.")
+    pss.add_argument("--page-id", dest="page_id", help="Narrow to one page in the project.")
     pss.add_argument("--limit", type=int, help="1–25, default 5.")
+    pgrep = pa.add_parser("grep", help="Regex search over one project's page prose.")
+    pgrep.add_argument("project_id")
+    pgrep.add_argument("--pattern", required=True, help="PCRE regex without delimiters (max 500 chars).")
+    pgrep.add_argument("--page-id", dest="page_id", help="Narrow to one page in the project.")
+    pgrep.add_argument("--ignore-case", dest="ignore_case", action="store_true")
+    pgrep.add_argument("--context", type=int, help="Context lines before/after (0–10, default 2).")
+    pgrep.add_argument("--max-count", dest="max_count", type=int, help="Matches shown per page (1–200).")
+    pgrep.add_argument("--max-pages", dest="max_pages", type=int, help="Matching pages shown (1–25).")
+    pgrep.add_argument("--count-only", dest="count_only", action="store_true", help="Return counts only.")
+    add_json(pgrep)
     page.set_defaults(handler=cmd_page)
 
     # tasks
@@ -476,6 +704,20 @@ def build_parser() -> argparse.ArgumentParser:
     tl.add_argument("--project-id", dest="project_id")
     tl.add_argument("--week-id", dest="week_id")
     tl.add_argument("--inbox", action="store_true", help="Only the desk's no-week inbox tasks (excludes --week-id; API rejects both).")
+    tl.add_argument("--desk-id", dest="desk_id", help="Owner/admin: filter to one desk.")
+    add_boolean_pair(
+        tl, "is_recurring_template", "--recurring-template",
+        "--not-recurring-template", "Only recurring templates.",
+        "Only non-template tasks.", query=True,
+    )
+    add_boolean_pair(
+        tl, "is_flagged", "--flagged", "--not-flagged",
+        "Only flagged tasks.", "Only unflagged tasks.", query=True,
+    )
+    tl.add_argument("--sort", help="Sort field (default created_at).")
+    tl.add_argument("--sort-order", dest="sort_order", type=int, choices=[-1, 1])
+    tl.add_argument("--per-page", dest="per_page", type=int, help="Rows per page (max 100).")
+    tl.add_argument("--page", type=int, help="Pagination page.")
     add_json(tl)
     tg = ta.add_parser("get", help="Single task.")
     tg.add_argument("task_id")
@@ -485,11 +727,20 @@ def build_parser() -> argparse.ArgumentParser:
     tc.add_argument("--body")
     tc.add_argument("--project-id", dest="project_id")
     tc.add_argument("--week-id", dest="week_id", help="Omit for inbox.")
+    tc.add_argument("--desk-id", dest="desk_id", help="Owner/admin: create for this desk.")
+    add_boolean_pair(
+        tc, "is_flagged", "--flagged", "--not-flagged",
+        "Create the task flagged.", "Create the task unflagged.",
+    )
     tu = ta.add_parser("update", help="Partial update (week moves go through move-week).")
     tu.add_argument("task_id")
     tu.add_argument("--title")
     tu.add_argument("--body")
     tu.add_argument("--project-id", dest="project_id")
+    add_boolean_pair(
+        tu, "is_flagged", "--flagged", "--not-flagged",
+        "Flag the task.", "Clear the task's flagged state.",
+    )
     tcl = ta.add_parser("comments", help="List a task's comment timeline (JSON).")
     tcl.add_argument("task_id")
     tcm = ta.add_parser("comment", help="Post a comment on a task.")
@@ -511,12 +762,14 @@ def build_parser() -> argparse.ArgumentParser:
     td.add_argument("--confirm", action="store_true")
     tmw = ta.add_parser("move-week", help="Move to a week (or --inbox).")
     tmw.add_argument("task_id")
-    tmw.add_argument("--week-id", dest="week_id")
-    tmw.add_argument("--inbox", action="store_true", help="Move to inbox (null week).")
+    week_target = tmw.add_mutually_exclusive_group(required=True)
+    week_target.add_argument("--week-id", dest="week_id")
+    week_target.add_argument("--inbox", action="store_true", help="Move to inbox (null week).")
     tmp = ta.add_parser("move-project", help="Move to a project (or --none).")
     tmp.add_argument("task_id")
-    tmp.add_argument("--project-id", dest="project_id")
-    tmp.add_argument("--none", action="store_true", help="Uncategorized (null project).")
+    project_target = tmp.add_mutually_exclusive_group(required=True)
+    project_target.add_argument("--project-id", dest="project_id")
+    project_target.add_argument("--none", action="store_true", help="Uncategorized (null project).")
     tds = ta.add_parser("deadline-set", help="Set/update a deadline.")
     tds.add_argument("task_id")
     tds.add_argument("--due-at", dest="due_at", required=True, help="ISO-8601 UTC.")
@@ -534,7 +787,9 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--end-count", dest="end_count", type=int)
         sp.add_argument("--end-date", dest="end_date", help="YYYY-MM-DD.")
         sp.add_argument("--start-at", dest="start_at", help="YYYY-MM-DD.")
-        sp.add_argument("--due-time", dest="due_time", help="HH:MM (15-min increments).")
+        due = sp.add_mutually_exclusive_group()
+        due.add_argument("--due-time", dest="due_time", help="HH:MM (15-min increments).")
+        due.add_argument("--due-all-day", dest="due_all_day", action="store_true", help="Create all-day due dates.")
         sp.add_argument("--due-weekday", dest="due_weekday", type=int, help="1–7 ISO.")
     trr = ta.add_parser("recur-remove", help="Strip recurring status.")
     trr.add_argument("task_id")
@@ -543,11 +798,13 @@ def build_parser() -> argparse.ArgumentParser:
     # weeks
     week = sub.add_parser("week", help="A week's tasks grouped by project.")
     week.add_argument("--date", help="Week start YYYY-MM-DD. Omit for current.")
+    week.add_argument("--desk-id", dest="desk_id", help="Owner/admin: show one desk's week.")
     add_json(week)
     week.set_defaults(handler=cmd_week)
     weeks = sub.add_parser("weeks", help="List weeks with completion stats.")
     weeks.add_argument("--past", type=int)
     weeks.add_argument("--future", type=int)
+    weeks.add_argument("--desk-id", dest="desk_id", help="Owner/admin: completion stats for one desk.")
     add_json(weeks)
     weeks.set_defaults(handler=cmd_weeks)
 
@@ -560,6 +817,23 @@ def build_parser() -> argparse.ArgumentParser:
     asr.add_argument("--q", required=True)
     asr.add_argument("--sort")
     asr.add_argument("--limit", type=int)
+    al = aa.add_parser("list", help="List recent task, project, and page assets.")
+    al.add_argument("--filename", help="Filename substring filter.")
+    parent = al.add_mutually_exclusive_group()
+    parent.add_argument("--task-id", dest="task_id")
+    parent.add_argument("--project-id", dest="project_id")
+    parent.add_argument("--page-id", dest="page_id")
+    al.add_argument("--sort", help="newest, oldest, name_asc, or name_desc.")
+    al.add_argument("--page", type=int, help="Pagination page.")
+    al.add_argument("--per-page", dest="per_page", type=int, help="Rows per page (max 100).")
+    add_json(al)
+    au = aa.add_parser("update", help="Rename and/or replace an asset directly.")
+    au.add_argument("asset_id")
+    au.add_argument("--filename", help="New filename; at least this or content is required (extension unchanged).")
+    replacement = au.add_mutually_exclusive_group()
+    replacement.add_argument("--content", help="Replacement text or pre-encoded base64.")
+    replacement.add_argument("--content-file", dest="content_file", help="Read replacement bytes from a file.")
+    au.add_argument("--encoding", choices=["utf8", "base64"], help="Content encoding (default utf8).")
     alp = aa.add_parser("list-project", help="List a project's assets.")
     alp.add_argument("project_id")
     alp.add_argument("--search")
@@ -620,9 +894,23 @@ def build_parser() -> argparse.ArgumentParser:
     add_json(dsg)
 
     def add_desk_fields(sp):
-        sp.add_argument("--owner-type", dest="owner_type", choices=["person", "agent", "unassigned"])
-        sp.add_argument("--owner-actor-id", dest="owner_actor_id", type=int, help="Existing actor to own the desk.")
+        sp.add_argument(
+            "--assignee-type", "--owner-type", dest="assignee_type",
+            choices=["person", "agent", "unassigned"],
+            help="Who sits at the desk (legacy alias: --owner-type).",
+        )
+        sp.add_argument(
+            "--assignee-actor-id", "--owner-actor-id", dest="assignee_actor_id",
+            type=int, help="Existing actor to seat (legacy alias: --owner-actor-id).",
+        )
+        sp.add_argument(
+            "--owner-id", dest="owner_id", type=int,
+            help="Responsible user id for an agent desk.",
+        )
         sp.add_argument("--project-ids", dest="project_ids", help="Comma-separated project ids (display order).")
+        sp.add_argument("--brief", help="Retained desk brief field (write-compatible).")
+        sp.add_argument("--rules", help="Retained desk rules field (write-compatible).")
+        sp.add_argument("--memory", help="Retained desk memory field (write-compatible).")
 
     dsc = ds.add_parser("create", help="Create a desk.")
     dsc.add_argument("--name", required=True)
@@ -643,10 +931,14 @@ def build_parser() -> argparse.ArgumentParser:
     dsx = ds.add_parser("detach", help="Detach a project from a desk.")
     dsx.add_argument("desk_id")
     dsx.add_argument("project_id")
-    dsk = ds.add_parser("mint-key", help="Mint a desk key (token shown once).")
+    dsk = ds.add_parser("mint-key", help="Mint a desk key into a protected saved profile.")
     dsk.add_argument("desk_id")
     dsk.add_argument("--name", required=True, help="Key label (≤255).")
     dsk.add_argument("--expires-at", dest="expires_at", help="ISO-8601 in the future.")
+    dsk.add_argument(
+        "--save-profile", required=True,
+        help="New local profile that receives the key; existing profiles are never overwritten.",
+    )
     desks.set_defaults(handler=cmd_desks)
 
     return parser

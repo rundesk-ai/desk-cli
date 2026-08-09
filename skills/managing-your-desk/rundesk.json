@@ -1,0 +1,5 @@
+{
+  "needs": {
+    "RUNDESK_API_KEY": "a Rundesk API key from Rundesk Settings; use a desk-bound key for one desk or an owner key for account-wide work"
+  }
+}

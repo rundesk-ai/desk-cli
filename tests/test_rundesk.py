@@ -390,13 +390,33 @@ class PayloadShapingTests(unittest.TestCase):
 
     def test_create_desk_owner(self):
         self.client.create_desk(
-            name="Support", owner_type="agent", owner_actor_id=11, project_ids=[3, 7]
+            name="Support", assignee_type="agent", assignee_actor_id=11,
+            owner_id=5, project_ids=[3, 7], brief="Context", rules="Be exact",
+            memory="Started",
         )
         call = self.transport.last
         self.assertEqual(call["path"], "/desks")
         self.assertEqual(
             call["payload"],
-            {"name": "Support", "owner_type": "agent", "owner_actor_id": 11, "project_ids": [3, 7]},
+            {
+                "name": "Support", "assignee_type": "agent",
+                "assignee_actor_id": 11, "owner_id": 5, "project_ids": [3, 7],
+                "brief": "Context", "rules": "Be exact", "memory": "Started",
+            },
+        )
+
+    def test_create_desk_legacy_owner_keywords_map_to_assignee_wire(self):
+        self.client.create_desk(name="Support", owner_type="agent", owner_actor_id=11)
+        self.assertEqual(
+            self.transport.last["payload"],
+            {"name": "Support", "assignee_type": "agent", "assignee_actor_id": 11},
+        )
+
+    def test_create_desk_preserves_explicit_zero_assignee_id(self):
+        self.client.create_desk(name="Support", assignee_actor_id=0)
+        self.assertEqual(
+            self.transport.last["payload"],
+            {"name": "Support", "assignee_actor_id": 0},
         )
 
     def test_create_desk_key(self):
@@ -415,7 +435,18 @@ class PayloadShapingTests(unittest.TestCase):
         call = self.transport.last
         self.assertEqual(call["method"], "PATCH")
         self.assertEqual(call["path"], "/projects/5/pages/reorder")
-        self.assertEqual(call["payload"], {"ids": [3, 1, 2]})
+        self.assertEqual(
+            call["payload"],
+            {"scopes": [{"parent_page_id": None, "ids": [3, 1, 2]}]},
+        )
+
+    def test_reorder_pages_rejects_parent_with_scopes(self):
+        with self.assertRaises(RundeskError):
+            self.client.reorder_pages(
+                5,
+                parent_page_id=7,
+                scopes=[{"parent_page_id": None, "ids": [3, 1, 2]}],
+            )
 
     def test_authorization_header_present(self):
         self.client.get_account()
@@ -572,6 +603,21 @@ class WriteDeleteMethodTests(unittest.TestCase):
         self.client.update_project(7, name="New", color="#abc")
         self._assert("PUT", "/projects/7", {"name": "New", "color": "#abc"})
 
+    def test_create_project_owner_target_omits_automatic_indexing(self):
+        self.client.create_project("New", desk_id=4, index_pages=True)
+        self._assert(
+            "POST", "/projects",
+            {"name": "New", "desk_id": 4},
+        )
+
+    def test_create_project_rejects_retired_hidden_field(self):
+        with self.assertRaises(RundeskError):
+            self.client.create_project("New", is_hidden=True)
+
+    def test_create_project_rejects_disabled_initial_indexing(self):
+        with self.assertRaises(RundeskError):
+            self.client.create_project("New", index_pages=False)
+
     def test_delete_project(self):
         self.client.delete_project(7)
         self._assert("DELETE", "/projects/7", None)
@@ -590,9 +636,26 @@ class WriteDeleteMethodTests(unittest.TestCase):
             "PUT", "/projects/1/pages/2", {"body": "b", "frontmatter": "role: rules", "description": "d"}
         )
 
+    def test_update_page_can_move_and_sort(self):
+        self.client.update_page(1, 2, parent_page_id=7, sort_order=3)
+        self._assert(
+            "PUT", "/projects/1/pages/2", {"parent_page_id": 7, "sort_order": 3},
+        )
+
+    def test_update_page_can_move_to_top_level(self):
+        self.client.update_page(1, 2, parent_page_id=None, set_parent=True)
+        self._assert("PUT", "/projects/1/pages/2", {"parent_page_id": None})
+
     def test_delete_page(self):
         self.client.delete_page(1, 2)
         self._assert("DELETE", "/projects/1/pages/2", None)
+
+    def test_update_asset_content_and_filename(self):
+        self.client.update_asset(2, filename="brief.txt", content="hello", encoding="utf8")
+        self._assert(
+            "PATCH", "/assets/2",
+            {"filename": "brief.txt", "content": "hello", "encoding": "utf8"},
+        )
 
     def test_move_task_project_null_keeps_key(self):
         self.client.move_task_project(8, None)
@@ -611,8 +674,26 @@ class WriteDeleteMethodTests(unittest.TestCase):
         self._assert("DELETE", "/tasks/8/recurring", None)
 
     def test_update_desk(self):
-        self.client.update_desk(3, name="X", owner_type="person", owner_actor_id=5)
-        self._assert("PUT", "/desks/3", {"name": "X", "owner_type": "person", "owner_actor_id": 5})
+        self.client.update_desk(
+            3, name="X", assignee_type="person", assignee_actor_id=5,
+            brief="Context", rules="Be exact", memory="Started",
+        )
+        self._assert(
+            "PUT", "/desks/3",
+            {
+                "name": "X", "assignee_type": "person", "assignee_actor_id": 5,
+                "brief": "Context", "rules": "Be exact", "memory": "Started",
+            },
+        )
+
+    def test_update_desk_legacy_assignment_and_owner_id(self):
+        self.client.update_desk(
+            3, owner_type="agent", owner_actor_id=7, owner_id=5,
+        )
+        self._assert(
+            "PUT", "/desks/3",
+            {"assignee_type": "agent", "assignee_actor_id": 7, "owner_id": 5},
+        )
 
     def test_delete_desk(self):
         self.client.delete_desk(3)
@@ -697,13 +778,51 @@ class StateAndReadWiringTests(unittest.TestCase):
         self.assertEqual(self.transport.last["path"], "/weeks/2026-01-05")
 
     def test_search_pages_param_wiring(self):
-        self.client.search_pages(q="hello world", project_type="professional", project_id=4, limit=10)
+        self.client.search_pages(
+            q="hello world", project_type="professional", project_id=4,
+            page_id=9, limit=10,
+        )
         url = self.transport.last["url"]
         self.assertEqual(self.transport.last["path"], "/pages/search")
         self.assertIn("project_type=professional", url)
         self.assertIn("project_id=4", url)
+        self.assertIn("page_id=9", url)
         self.assertIn("limit=10", url)
         self.assertIn("q=hello+world", url)
+
+    def test_human_mention_inbox_and_count_wiring(self):
+        self.client.list_user_mentions(unread=True, per_page=10, page=2)
+        self.assertEqual(self.transport.last["path"], "/mentions")
+        for expected in ("unread=1", "per_page=10", "page=2"):
+            self.assertIn(expected, self.transport.last["url"])
+
+        self.client.get_user_mentions_count()
+        self.assertEqual(self.transport.last["path"], "/mentions/unread-count")
+
+    def test_human_mention_search_and_entity_wiring(self):
+        self.client.search_user_mention_targets(
+            q="alex", types="actor", limit=5, project_id=2, task_id=3,
+        )
+        self.assertEqual(self.transport.last["path"], "/mentions/search")
+        for expected in (
+            "q=alex", "types=actor", "limit=5", "project_id=2", "task_id=3",
+        ):
+            self.assertIn(expected, self.transport.last["url"])
+
+        self.client.list_entity_mentions("task", 9, per_page=10, page=2)
+        self.assertEqual(self.transport.last["path"], "/mentions/entity/task/9")
+        self.assertIn("per_page=10", self.transport.last["url"])
+        self.assertIn("page=2", self.transport.last["url"])
+
+    def test_human_mention_read_wiring(self):
+        self.client.mark_user_mention_read(7)
+        self.assertEqual(self.transport.last["method"], "POST")
+        self.assertEqual(self.transport.last["path"], "/mentions/7/read")
+        self.assertIsNone(self.transport.last["payload"])
+        self.client.mark_all_user_mentions_read()
+        self.assertEqual(self.transport.last["method"], "POST")
+        self.assertEqual(self.transport.last["path"], "/mentions/read-all")
+        self.assertIsNone(self.transport.last["payload"])
 
     def test_get_page_frontmatter_only(self):
         self.client.get_page(1, 2, frontmatter_only=True)
@@ -716,14 +835,28 @@ class StateAndReadWiringTests(unittest.TestCase):
         self.assertIn("all=1", url)
         self.assertNotIn("limit", url)
 
+    def test_get_changelog_major(self):
+        self.client.get_changelog(major=3)
+        self.assertIn("major=3", self.transport.last["url"])
+
     def test_list_tasks_multi_param(self):
-        self.client.list_tasks(status="todo", project_id=3, task_week_id=9, is_recurring_template=1)
+        self.client.list_tasks(
+            status="todo", project_id=3, task_week_id=9, desk_id=2,
+            is_recurring_template=1, is_flagged=1, sort="title", sort_order=1,
+            per_page=25, page=3,
+        )
         url = self.transport.last["url"]
         self.assertEqual(self.transport.last["path"], "/tasks")
         self.assertIn("status=todo", url)
         self.assertIn("project_id=3", url)
         self.assertIn("task_week_id=9", url)
+        self.assertIn("desk_id=2", url)
         self.assertIn("is_recurring_template=1", url)
+        self.assertIn("is_flagged=1", url)
+        self.assertIn("sort=title", url)
+        self.assertIn("sort_order=1", url)
+        self.assertIn("per_page=25", url)
+        self.assertIn("page=3", url)
 
     def test_list_tasks_inbox(self):
         self.client.list_tasks(inbox=1)
@@ -732,12 +865,48 @@ class StateAndReadWiringTests(unittest.TestCase):
         self.assertIn("inbox=1", url)
 
     def test_list_projects_multi_param(self):
-        self.client.list_projects(search="foo", type="personal", is_archived=1)
+        self.client.list_projects(
+            search="foo", type="personal", is_archived=1, desk_id=2,
+            sort="name", sort_order=-1, per_page=25, page=3,
+        )
         url = self.transport.last["url"]
         self.assertEqual(self.transport.last["path"], "/projects")
         self.assertIn("search=foo", url)
         self.assertIn("type=personal", url)
         self.assertIn("is_archived=1", url)
+        self.assertIn("desk_id=2", url)
+        self.assertIn("sort=name", url)
+        self.assertIn("sort_order=-1", url)
+        self.assertIn("per_page=25", url)
+        self.assertIn("page=3", url)
+
+    def test_grep_pages_param_wiring(self):
+        self.client.grep_pages(
+            4, pattern="foo|bar", page_id=9, ignore_case=True, context=3,
+            max_count=20, max_pages=5, count_only=True,
+        )
+        url = self.transport.last["url"]
+        self.assertEqual(self.transport.last["path"], "/projects/4/pages/grep")
+        for expected in (
+            "pattern=foo%7Cbar", "page_id=9", "ignore_case=1", "context=3",
+            "max_count=20", "max_pages=5", "count_only=1",
+        ):
+            self.assertIn(expected, url)
+
+    def test_unified_asset_list_param_wiring(self):
+        self.client.list_assets(
+            filename="brief", task_id=1, sort="newest", page=2, per_page=10,
+        )
+        url = self.transport.last["url"]
+        self.assertEqual(self.transport.last["path"], "/assets")
+        for expected in ("filename=brief", "task_id=1", "sort=newest", "page=2", "per_page=10"):
+            self.assertIn(expected, url)
+
+    def test_week_reads_accept_owner_desk_target(self):
+        self.client.get_week(date="2026-01-05", desk_id=7)
+        self.assertIn("desk_id=7", self.transport.last["url"])
+        self.client.list_weeks(past=2, future=3, desk_id=7)
+        self.assertIn("desk_id=7", self.transport.last["url"])
 
     def test_list_project_assets_multi_param(self):
         self.client.list_project_assets(5, search="img", sort="newest", page=2)
@@ -806,6 +975,7 @@ class ConfirmGateTests(unittest.TestCase):
         (["projects", "delete", "5"], "delete_project"),
         (["page", "delete", "5", "6"], "delete_page"),
         (["tasks", "delete", "5"], "delete_task"),
+        (["tasks", "comment-delete", "5", "6"], "delete_task_comment"),
         (["desks", "delete", "5"], "delete_desk"),
         (["asset", "delete-task", "5", "6"], "delete_task_asset"),
         (["asset", "delete-project", "5", "6"], "delete_project_asset"),
@@ -861,11 +1031,96 @@ class CliErrorHandlingTests(unittest.TestCase):
 
 # ── rundesk.py CLI: argument → client-call wiring ────────────────────────────
 class CliWiringTests(unittest.TestCase):
+    def test_human_mention_commands_route(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(
+                ["user-mentions", "list", "--unread", "--per-page", "10", "--page", "2"]
+            )
+        inst.list_user_mentions.assert_called_once_with(
+            unread=True, per_page=10, page=2,
+        )
+
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(
+                ["user-mentions", "search", "--q", "alex", "--types", "actor",
+                 "--project-id", "2", "--task-id", "3", "--limit", "5"]
+            )
+        inst.search_user_mention_targets.assert_called_once_with(
+            q="alex", types="actor", limit=5, project_id="2", task_id="3",
+        )
+
+    def test_human_mention_read_commands_route(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(["user-mentions", "read", "7"])
+        inst.mark_user_mention_read.assert_called_once_with("7")
+
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(["user-mentions", "read-all"])
+        inst.mark_all_user_mentions_read.assert_called_once_with()
+
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(
+                ["user-mentions", "entity", "task", "9", "--per-page", "10", "--page", "2"]
+            )
+        inst.list_entity_mentions.assert_called_once_with(
+            "task", "9", per_page=10, page=2,
+        )
+
+    def test_projects_list_owner_target_sort_and_pagination(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(
+                ["projects", "list", "--desk-id", "4", "--sort", "name",
+                 "--sort-order", "-1", "--per-page", "25", "--page", "2"]
+            )
+        _, kwargs = inst.list_projects.call_args
+        self.assertEqual(kwargs.get("desk_id"), "4")
+        self.assertEqual(kwargs.get("sort"), "name")
+        self.assertEqual(kwargs.get("sort_order"), -1)
+        self.assertEqual(kwargs.get("per_page"), 25)
+        self.assertEqual(kwargs.get("page"), 2)
+
+    def test_changelog_major_routes(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(["changelog", "--major", "3"])
+        _, kwargs = inst.get_changelog.call_args
+        self.assertEqual(kwargs.get("major"), 3)
+
+    def test_project_get_owner_desk_scope_routes(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(["projects", "get", "7", "--desk-id", "4"])
+        _, kwargs = inst.get_project.call_args
+        self.assertEqual(kwargs.get("desk_id"), "4")
+
+    def test_projects_create_rejects_disabled_initial_indexing(self):
+        with patched_cli_client() as (_cls, inst):
+            inst.create_project.side_effect = RundeskError("usage", "always enabled")
+            result = rundesk_mod.main(
+                ["projects", "create", "--name", "Docs", "--desk-id", "4",
+                 "--no-index-pages"]
+            )
+        self.assertEqual(result, 2)
+
     def test_page_list_role_shorthand(self):
         with patched_cli_client() as (_cls, inst):
             rundesk_mod.main(["page", "list", "5", "--role", "rules"])
         _, kwargs = inst.get_pages.call_args
         self.assertEqual(kwargs.get("meta"), {"page_role": "rules"})
+
+    def test_page_update_can_move_to_top_level_and_sort(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(
+                ["page", "update", "5", "9", "--top-level", "--sort-order", "2"]
+            )
+        _, kwargs = inst.update_page.call_args
+        self.assertTrue(kwargs.get("set_parent"))
+        self.assertEqual(kwargs.get("sort_order"), 2)
+
+    def test_page_reorder_accepts_multi_scope_json(self):
+        scopes = '[{"parent_page_id":null,"ids":[1,2]},{"parent_page_id":2,"ids":[3]}]'
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(["page", "reorder", "5", "--scopes", scopes])
+        _, kwargs = inst.reorder_pages.call_args
+        self.assertEqual(kwargs.get("scopes")[1]["parent_page_id"], 2)
 
     def test_page_list_valid_meta_parsed(self):
         with patched_cli_client() as (_cls, inst):
@@ -873,11 +1128,85 @@ class CliWiringTests(unittest.TestCase):
         _, kwargs = inst.get_pages.call_args
         self.assertEqual(kwargs.get("meta"), {"status": "done"})
 
+    def test_page_list_filters_and_pagination(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(
+                ["page", "list", "5", "--search", "brief", "--body",
+                 "--body-chars", "120", "--per-page", "25", "--page", "3"]
+            )
+        _, kwargs = inst.get_pages.call_args
+        self.assertEqual(kwargs.get("search"), "brief")
+        self.assertEqual(kwargs.get("body_chars"), 120)
+        self.assertEqual(kwargs.get("per_page"), 25)
+        self.assertEqual(kwargs.get("page"), 3)
+
+    def test_page_grep_routes_all_filters(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(
+                ["page", "grep", "5", "--pattern", "foo", "--page-id", "9",
+                 "--ignore-case", "--context", "3", "--max-count", "20",
+                 "--max-pages", "4", "--count-only"]
+            )
+        _, kwargs = inst.grep_pages.call_args
+        self.assertEqual(kwargs.get("pattern"), "foo")
+        self.assertEqual(kwargs.get("page_id"), "9")
+        self.assertTrue(kwargs.get("ignore_case"))
+        self.assertTrue(kwargs.get("count_only"))
+
+    def test_page_search_accepts_page_id(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(
+                ["page", "search", "--q", "brief", "--project-type", "professional",
+                 "--project-id", "5", "--page-id", "9"]
+            )
+        _, kwargs = inst.search_pages.call_args
+        self.assertEqual(kwargs.get("page_id"), "9")
+
     def test_tasks_list_inbox_passes_flag(self):
         with patched_cli_client() as (_cls, inst):
             rundesk_mod.main(["tasks", "list", "--inbox"])
         _, kwargs = inst.list_tasks.call_args
         self.assertEqual(kwargs.get("inbox"), 1)
+
+    def test_tasks_list_owner_filters_and_pagination(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(
+                ["tasks", "list", "--desk-id", "4", "--recurring-template",
+                 "--flagged", "--sort", "title", "--sort-order", "1",
+                 "--per-page", "25", "--page", "2"]
+            )
+        _, kwargs = inst.list_tasks.call_args
+        self.assertEqual(kwargs.get("desk_id"), "4")
+        self.assertEqual(kwargs.get("is_recurring_template"), 1)
+        self.assertEqual(kwargs.get("is_flagged"), 1)
+        self.assertEqual(kwargs.get("sort"), "title")
+        self.assertEqual(kwargs.get("sort_order"), 1)
+        self.assertEqual(kwargs.get("per_page"), 25)
+        self.assertEqual(kwargs.get("page"), 2)
+
+    def test_tasks_create_owner_target_and_flagged(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(
+                ["tasks", "create", "--title", "Do it", "--desk-id", "4", "--flagged"]
+            )
+        _, kwargs = inst.create_task.call_args
+        self.assertEqual(kwargs.get("desk_id"), "4")
+        self.assertTrue(kwargs.get("is_flagged"))
+
+    def test_tasks_update_can_clear_flagged(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(["tasks", "update", "8", "--not-flagged"])
+        _, kwargs = inst.update_task.call_args
+        self.assertIs(kwargs.get("is_flagged"), False)
+
+    def test_task_recurrence_due_all_day(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(
+                ["tasks", "recur-set", "8", "--frequency", "weekly", "--interval", "1",
+                 "--end-type", "never", "--days-of-week", "1", "3", "--due-all-day"]
+            )
+        _, kwargs = inst.set_task_recurring.call_args
+        self.assertTrue(kwargs.get("due_all_day"))
 
     def test_tasks_list_no_inbox_omits_flag(self):
         with patched_cli_client() as (_cls, inst):
@@ -900,13 +1229,36 @@ class CliWiringTests(unittest.TestCase):
     def test_desks_create_field_wiring(self):
         with patched_cli_client() as (_cls, inst):
             rundesk_mod.main(
-                ["desks", "create", "--name", "Support", "--owner-type", "agent",
-                 "--owner-actor-id", "11", "--project-ids", "3,7"]
+                ["desks", "create", "--name", "Support", "--assignee-type", "agent",
+                 "--assignee-actor-id", "11", "--owner-id", "5",
+                 "--project-ids", "3,7", "--brief", "Context",
+                 "--rules", "Be exact", "--memory", "Started"]
             )
         _, kwargs = inst.create_desk.call_args
-        self.assertEqual(kwargs.get("owner_type"), "agent")
-        self.assertEqual(kwargs.get("owner_actor_id"), 11)
+        self.assertEqual(kwargs.get("assignee_type"), "agent")
+        self.assertEqual(kwargs.get("assignee_actor_id"), 11)
+        self.assertEqual(kwargs.get("owner_id"), 5)
         self.assertEqual(kwargs.get("project_ids"), [3, 7])
+        self.assertEqual(kwargs.get("brief"), "Context")
+        self.assertEqual(kwargs.get("rules"), "Be exact")
+        self.assertEqual(kwargs.get("memory"), "Started")
+
+    def test_page_reorder_invalid_id_exits_usage(self):
+        with patched_cli_client() as (_cls, inst):
+            with self.assertRaises(SystemExit) as raised:
+                rundesk_mod.main(["page", "reorder", "5", "not-an-id"])
+        self.assertEqual(raised.exception.code, 2)
+        inst.reorder_pages.assert_not_called()
+
+    def test_desks_create_legacy_assignment_flags_are_aliases(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(
+                ["desks", "create", "--name", "Support", "--owner-type", "agent",
+                 "--owner-actor-id", "11"]
+            )
+        _, kwargs = inst.create_desk.call_args
+        self.assertEqual(kwargs.get("assignee_type"), "agent")
+        self.assertEqual(kwargs.get("assignee_actor_id"), 11)
 
     def test_desks_update_project_ids_parsed(self):
         with patched_cli_client() as (_cls, inst):
@@ -945,6 +1297,15 @@ class CliWiringTests(unittest.TestCase):
             rundesk_mod.main(["desks", "unretire", "9"])
         inst.unretire_desk.assert_called_once_with("9")
 
+    def test_standalone_mint_refuses_before_creating_a_key(self):
+        with patched_cli_client() as (_cls, inst):
+            rc = rundesk_mod.main(
+                ["desks", "mint-key", "9", "--name", "worker",
+                 "--save-profile", "worker"]
+            )
+        self.assertEqual(rc, 2)
+        inst.create_desk_key.assert_not_called()
+
     def test_asset_get_routes(self):
         with patched_cli_client() as (_cls, inst):
             rundesk_mod.main(["asset", "get", "42"])
@@ -956,6 +1317,85 @@ class CliWiringTests(unittest.TestCase):
         _, kwargs = inst.search_project_assets.call_args
         self.assertEqual(kwargs.get("q"), "logo")
         self.assertEqual(kwargs.get("limit"), 5)
+
+    def test_unified_asset_list_routes(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(
+                ["asset", "list", "--filename", "brief", "--project-id", "4",
+                 "--sort", "newest", "--page", "2", "--per-page", "10"]
+            )
+        _, kwargs = inst.list_assets.call_args
+        self.assertEqual(kwargs.get("filename"), "brief")
+        self.assertEqual(kwargs.get("project_id"), "4")
+        self.assertEqual(kwargs.get("per_page"), 10)
+
+    def test_direct_asset_update_routes(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(
+                ["asset", "update", "2", "--filename", "brief.txt",
+                 "--content", "hello", "--encoding", "utf8"]
+            )
+        inst.update_asset.assert_called_once_with(
+            "2", filename="brief.txt", content="hello", encoding="utf8"
+        )
+
+    def test_direct_asset_update_base64_encodes_a_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "image.bin"
+            path.write_bytes(b"\x00\xff")
+            with patched_cli_client() as (_cls, inst):
+                rundesk_mod.main(
+                    ["asset", "update", "2", "--content-file", str(path),
+                     "--encoding", "base64"]
+                )
+        inst.update_asset.assert_called_once_with(
+            "2", filename=None, content="AP8=", encoding="base64"
+        )
+
+    def test_direct_asset_update_bad_path_aborts_before_request(self):
+        with patched_cli_client() as (_cls, inst):
+            rc = rundesk_mod.main(
+                ["asset", "update", "2", "--content-file", "/no/such/asset"]
+            )
+        self.assertEqual(rc, 2)
+        inst.update_asset.assert_not_called()
+
+    def test_direct_asset_update_invalid_utf8_aborts_before_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "binary.bin"
+            path.write_bytes(b"\xff")
+            with patched_cli_client() as (_cls, inst):
+                rc = rundesk_mod.main(
+                    ["asset", "update", "2", "--content-file", str(path)]
+                )
+        self.assertEqual(rc, 2)
+        inst.update_asset.assert_not_called()
+
+    def test_direct_asset_update_without_fields_aborts_before_request(self):
+        client = make_client()
+        transport = RecordingTransport()
+        client._send = transport
+        with self.assertRaises(RundeskError):
+            client.update_asset(2)
+        self.assertEqual(transport.calls, [])
+
+    def test_asset_list_parent_filters_are_mutually_exclusive(self):
+        with self.assertRaises(SystemExit):
+            rundesk_mod.build_parser().parse_args(
+                ["asset", "list", "--task-id", "1", "--project-id", "2"]
+            )
+
+    def test_week_owner_target_routes(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(["week", "--desk-id", "4"])
+        _, kwargs = inst.get_week.call_args
+        self.assertEqual(kwargs.get("desk_id"), "4")
+
+    def test_weeks_owner_target_routes(self):
+        with patched_cli_client() as (_cls, inst):
+            rundesk_mod.main(["weeks", "--desk-id", "4"])
+        _, kwargs = inst.list_weeks.call_args
+        self.assertEqual(kwargs.get("desk_id"), "4")
 
     def test_asset_delete_task_with_confirm_routes(self):
         with patched_cli_client() as (_cls, inst):

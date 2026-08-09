@@ -8,6 +8,10 @@ This module owns that file and the rule for turning "which profile?" into concre
 credentials; ``cli.py`` builds a ``RundeskClient`` from what ``resolve_credentials``
 returns.
 
+Rundesk-injected named skill profiles are deliberately separate: an explicit
+``--env-profile NAME`` reads only ``RUNDESK_API_KEY__NAME`` and the optional
+matching URL, never a saved or unsuffixed fallback.
+
 File: ``${XDG_CONFIG_HOME:-~/.config}/desk/config.json``
 ```json
 { "version": 1, "default": "work",
@@ -18,6 +22,7 @@ Never printed in full — ``mask_key`` shows only the last four characters.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -39,6 +44,22 @@ CONFIG_VERSION = 1
 LOCAL_PROFILE_FILENAME = ".desk-profile"
 # Matches `profile=name` / `profile: name` (also DESK_PROFILE=…), case-insensitive.
 _LOCAL_PROFILE_RE = re.compile(r"^(?:desk_)?profile\s*[:=]\s*(.+)$", re.IGNORECASE)
+_ENV_PROFILE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+
+class ConfigConflict(RundeskError):
+    """The profile file changed after it was loaded; callers must retry."""
+
+    def __init__(self) -> None:
+        super().__init__("usage", "profile config changed concurrently; retry the command.")
+
+
+class _Config(dict):
+    """A config mapping carrying the exact bytes it was loaded from."""
+
+    def __init__(self, *args: Any, revision: bytes | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.revision = revision
 
 
 # ── File location ──────────────────────────────────────────────────────────
@@ -54,7 +75,10 @@ def config_path() -> Path:
 
 # ── Load / save ────────────────────────────────────────────────────────────
 def _empty_config() -> dict[str, Any]:
-    return {"version": CONFIG_VERSION, "default": None, "profiles": {}}
+    return _Config(
+        {"version": CONFIG_VERSION, "default": None, "profiles": {}},
+        revision=None,
+    )
 
 
 def load_config() -> dict[str, Any]:
@@ -64,16 +88,18 @@ def load_config() -> dict[str, Any]:
     if not path.exists():
         return _empty_config()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_bytes()
+        data = json.loads(raw.decode("utf-8"))
     except (OSError, ValueError) as exc:
         raise RundeskError("usage", f"config at {path} is not readable JSON: {exc}") from exc
     if not isinstance(data, dict):
         raise RundeskError("usage", f"config at {path} is malformed (expected an object).")
-    data.setdefault("version", CONFIG_VERSION)
-    data.setdefault("default", None)
-    profiles = data.get("profiles")
-    data["profiles"] = profiles if isinstance(profiles, dict) else {}
-    return data
+    loaded = _Config(data, revision=raw)
+    loaded.setdefault("version", CONFIG_VERSION)
+    loaded.setdefault("default", None)
+    saved_profiles = loaded.get("profiles")
+    loaded["profiles"] = saved_profiles if isinstance(saved_profiles, dict) else {}
+    return loaded
 
 
 def save_config(cfg: dict[str, Any]) -> None:
@@ -84,9 +110,35 @@ def save_config(cfg: dict[str, Any]) -> None:
     os.chmod(directory, 0o700)
     path = config_path()
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    lock_path = path.with_name(path.name + ".lock")
+    serialized = json.dumps(cfg, indent=2, sort_keys=True) + "\n"
+    encoded = serialized.encode("utf-8")
+    lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        current = path.read_bytes() if path.exists() else None
+        expected = getattr(cfg, "revision", current)
+        if current != expected:
+            raise ConfigConflict()
+
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            # An old interrupted temp file could have broader permissions.
+            # Tighten the descriptor before writing the first credential byte.
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                fd = -1
+                handle.write(encoded)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+        os.replace(tmp, path)
+        if isinstance(cfg, _Config):
+            cfg.revision = encoded
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
 
 
 # ── Mutations (operate on an in-memory cfg; caller saves) ──────────────────
@@ -143,7 +195,10 @@ def dir_profile(start: str | os.PathLike[str] | None = None) -> str | None:
 
 
 # ── The core rule: which credentials for this invocation? ──────────────────
-def resolve_credentials(name: str | None = None) -> tuple[str, str]:
+def resolve_credentials(
+    name: str | None = None,
+    env_profile: str | None = None,
+) -> tuple[str, str]:
     """Resolve ``(base_url, api_key)`` for this command, in precedence order:
 
     1. an explicit ``--profile NAME`` (error if unknown),
@@ -155,9 +210,34 @@ def resolve_credentials(name: str | None = None) -> tuple[str, str]:
        the CI / one-off escape hatch (an explicitly-set env var always wins),
     5. the saved ``default`` profile.
 
+    A distinct ``env_profile`` selects Rundesk-injected suffixed variables:
+    ``RUNDESK_API_KEY__NAME`` and optional ``RUNDESK_BASE_URL__NAME``. It never
+    consults the saved/default resolution chain or unsuffixed variables.
+
     Raises ``RundeskError('no_key', …)`` pointing at ``desk profile add`` when
     nothing resolves, so a fresh machine gets a friendly message, not a traceback.
     """
+    if name and env_profile:
+        raise RundeskError("usage", "--profile and --env-profile cannot be combined.")
+
+    if env_profile is not None:
+        suffix = env_profile.strip().upper()
+        if not _ENV_PROFILE_RE.fullmatch(suffix):
+            raise RundeskError(
+                "usage",
+                "--env-profile must start with a letter and contain only letters, digits, or underscores.",
+            )
+        key_name = f"RUNDESK_API_KEY__{suffix}"
+        url_name = f"RUNDESK_BASE_URL__{suffix}"
+        api_key = os.environ.get(key_name, "")
+        if not api_key:
+            raise RundeskError(
+                "no_key",
+                f"Named environment profile {env_profile.strip()!r} has no {key_name}.",
+            )
+        base_url = os.environ.get(url_name) or DEFAULT_BASE_URL
+        return base_url.rstrip("/"), api_key
+
     cfg = load_config()
     profiles = cfg.get("profiles", {})
 

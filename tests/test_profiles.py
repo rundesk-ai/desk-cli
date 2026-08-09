@@ -37,7 +37,10 @@ class ProfileStoreTests(unittest.TestCase):
         )
         self._env.start()
         # Ensure env escape-hatch vars don't leak in from the dev shell.
-        for var in ("RUNDESK_API_KEY", "RUNDESK_BASE_URL", "DESK_PROFILE"):
+        for var in (
+            "RUNDESK_API_KEY", "RUNDESK_BASE_URL", "DESK_PROFILE",
+            "RUNDESK_API_KEY__ALAN", "RUNDESK_BASE_URL__ALAN",
+        ):
             os.environ.pop(var, None)
 
     def tearDown(self):
@@ -68,6 +71,65 @@ class ProfileStoreTests(unittest.TestCase):
         self.assertEqual(reloaded["profiles"]["work"]["api_key"], "KEY-abcd1234")
         # base_url is normalized (trailing slash stripped) on add.
         self.assertEqual(reloaded["profiles"]["work"]["base_url"], "https://rundesk.ai")
+
+    def test_version_02_profile_file_loads_and_saves_without_schema_change(self):
+        path = profiles.config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            '{\n'
+            '  "default": "legacy",\n'
+            '  "profiles": {\n'
+            '    "legacy": {\n'
+            '      "api_key": "LEGACY-KEY",\n'
+            '      "base_url": "https://rundesk.ai"\n'
+            '    }\n'
+            '  },\n'
+            '  "version": 1\n'
+            '}\n',
+            encoding="utf-8",
+        )
+
+        cfg = profiles.load_config()
+        profiles.add_profile(cfg, "new", "https://rundesk.ai", "NEW-KEY")
+        profiles.save_config(cfg)
+
+        reloaded = profiles.load_config()
+        self.assertEqual(reloaded["version"], 1)
+        self.assertEqual(reloaded["default"], "legacy")
+        self.assertEqual(reloaded["profiles"]["legacy"]["api_key"], "LEGACY-KEY")
+        self.assertEqual(reloaded["profiles"]["new"]["api_key"], "NEW-KEY")
+
+    def test_temp_permissions_are_set_before_secret_bytes_are_written(self):
+        cfg = profiles.load_config()
+        profiles.add_profile(cfg, "work", "https://rundesk.ai", "SECRET-CREDENTIAL")
+        real_fchmod = profiles.os.fchmod
+        calls = 0
+
+        def fail_temp_permission(fd, mode):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("permission failure")
+            real_fchmod(fd, mode)
+
+        with mock.patch.object(profiles.os, "fchmod", side_effect=fail_temp_permission):
+            with self.assertRaises(OSError):
+                profiles.save_config(cfg)
+        tmp = profiles.config_path().with_name("config.json.tmp")
+        self.assertTrue(tmp.exists())
+        self.assertNotIn("SECRET-CREDENTIAL", tmp.read_text(encoding="utf-8"))
+
+    def test_stale_config_save_refuses_to_overwrite_a_concurrent_change(self):
+        first = profiles.load_config()
+        stale = profiles.load_config()
+        profiles.add_profile(first, "first", "https://first.test", "FIRST-KEY")
+        profiles.save_config(first)
+        profiles.add_profile(stale, "stale", "https://stale.test", "STALE-KEY")
+        with self.assertRaises(profiles.ConfigConflict):
+            profiles.save_config(stale)
+        saved = profiles.load_config()["profiles"]
+        self.assertIn("first", saved)
+        self.assertNotIn("stale", saved)
 
     def test_malformed_config_raises_usage(self):
         path = profiles.config_path()
@@ -210,6 +272,49 @@ class ProfileStoreTests(unittest.TestCase):
             profiles.resolve_credentials()
         self.assertEqual(ctx.exception.kind, "no_key")
         self.assertEqual(ctx.exception.exit_code, 2)
+
+    def test_resolve_named_env_profile_uses_complete_suffixed_set(self):
+        self._seed()
+        with mock.patch.dict(
+            os.environ,
+            {
+                "RUNDESK_API_KEY": "DEFAULT-KEY",
+                "RUNDESK_BASE_URL": "https://default.example",
+                "RUNDESK_API_KEY__ALAN": "ALAN-KEY",
+                "RUNDESK_BASE_URL__ALAN": "https://alan.example/",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                profiles.resolve_credentials(env_profile=" alan "),
+                ("https://alan.example", "ALAN-KEY"),
+            )
+
+    def test_named_env_profile_never_borrows_unsuffixed_key(self):
+        with mock.patch.dict(os.environ, {"RUNDESK_API_KEY": "DEFAULT-KEY"}, clear=False):
+            with self.assertRaises(RundeskError) as ctx:
+                profiles.resolve_credentials(env_profile="alan")
+        self.assertEqual(ctx.exception.kind, "no_key")
+        self.assertIn("RUNDESK_API_KEY__ALAN", str(ctx.exception))
+
+    def test_named_env_profile_uses_default_url_when_its_url_is_absent(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "RUNDESK_API_KEY__ALAN": "ALAN-KEY",
+                "RUNDESK_BASE_URL": "https://must-not-leak.example",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                profiles.resolve_credentials(env_profile="ALAN"),
+                (profiles.DEFAULT_BASE_URL, "ALAN-KEY"),
+            )
+
+    def test_named_env_profile_rejects_invalid_suffix(self):
+        with self.assertRaises(RundeskError) as ctx:
+            profiles.resolve_credentials(env_profile="not-valid")
+        self.assertEqual(ctx.exception.kind, "usage")
 
 
 class UpdaterVersionTests(unittest.TestCase):

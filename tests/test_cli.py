@@ -58,6 +58,14 @@ ID_DESTS = {
 # a surgical page patch in `replace` mode needs old_str/new_str.
 EXTRA_ARGS = {
     ("page", "patch"): ["--old-str", "x", "--new-str", "y"],
+    ("tasks", "move-week"): ["--inbox"],
+    ("tasks", "move-project"): ["--none"],
+    ("asset", "update"): ["--filename", "x.txt"],
+    ("page", "reorder"): ["1"],
+}
+
+POSITIONAL_VALUES = {
+    (("user-mentions", "entity"), "type"): "task",
 }
 
 
@@ -102,7 +110,10 @@ def _opt_value(action, tmpfile):
     return "x"
 
 
-def _pos_value(dest, tmpfile):
+def _pos_value(prefix, dest, tmpfile):
+    selected = POSITIONAL_VALUES.get((prefix, dest))
+    if selected is not None:
+        return selected
     if dest == "file":
         return tmpfile
     return "1" if dest in ID_DESTS else "x"
@@ -124,7 +135,7 @@ def _synth_argv(prefix, parser, tmpfile):
             if action.nargs in ("?", "*"):
                 continue  # optional positional — omit
             count = action.nargs if isinstance(action.nargs, int) else 1
-            argv += [_pos_value(action.dest, tmpfile) for _ in range(count)]
+            argv += [_pos_value(prefix, action.dest, tmpfile) for _ in range(count)]
     argv += EXTRA_ARGS.get(prefix, [])
     return argv
 
@@ -136,7 +147,10 @@ class _TransportMixin(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self._env = mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": self._tmp.name}, clear=False)
         self._env.start()
-        for var in ("RUNDESK_API_KEY", "RUNDESK_BASE_URL", "DESK_PROFILE"):
+        for var in (
+            "RUNDESK_API_KEY", "RUNDESK_BASE_URL", "DESK_PROFILE",
+            "RUNDESK_API_KEY__ALAN", "RUNDESK_BASE_URL__ALAN",
+        ):
             os.environ.pop(var, None)
 
         cfg = profiles.load_config()
@@ -154,6 +168,10 @@ class _TransportMixin(unittest.TestCase):
                     "auth": req.get_header("Authorization"),
                 }
             )
+            if req.full_url.endswith("/api/v1/desks/1/keys"):
+                return _FakeResponse(
+                    b'{"plain_text_token":"SYNTHETIC-MINTED-CREDENTIAL"}'
+                )
             return _FakeResponse(b"{}")
 
         self._orig = client_mod.urllib.request.urlopen
@@ -311,6 +329,224 @@ class DeleteGatingTests(_TransportMixin):
         self.assertEqual(rc, 0)
         self.assertTrue(self.captured[0]["url"].startswith("https://home.test"))
         self.assertEqual(self.captured[0]["auth"], "Bearer HOME-KEY-9999")
+
+    def test_env_profile_selects_suffixed_credentials(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "RUNDESK_API_KEY__ALAN": "ALAN-KEY-9999",
+                "RUNDESK_BASE_URL__ALAN": "https://alan.test",
+            },
+            clear=False,
+        ):
+            rc = cli.main(["--env-profile", "alan", "account"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.captured[0]["url"].startswith("https://alan.test"))
+        self.assertEqual(self.captured[0]["auth"], "Bearer ALAN-KEY-9999")
+
+    def test_env_profile_never_falls_back_to_saved_or_unsuffixed_credentials(self):
+        with mock.patch.dict(
+            os.environ,
+            {"RUNDESK_API_KEY": "UNSUFFIXED-KEY"},
+            clear=False,
+        ):
+            rc = cli.main(["--env-profile", "alan", "account"])
+        self.assertEqual(rc, 2)
+        self.assertEqual(self.captured, [])
+
+    def test_saved_and_env_profile_flags_are_mutually_exclusive(self):
+        with self.assertRaises(SystemExit):
+            cli.build_parser().parse_args(
+                ["--profile", "work", "--env-profile", "alan", "account"]
+            )
+
+
+class MintedKeySafetyTests(_TransportMixin):
+    def test_minted_key_is_saved_but_never_printed(self):
+        output = _capture_stdout(
+            lambda: self.assertEqual(
+                cli.main(
+                    ["desks", "mint-key", "1", "--name", "worker",
+                     "--save-profile", "worker"]
+                ),
+                0,
+            )
+        )
+        saved = profiles.load_config()["profiles"]["worker"]
+        self.assertEqual(saved["api_key"], "SYNTHETIC-MINTED-CREDENTIAL")
+        self.assertEqual(saved["base_url"], BASE_URL)
+        self.assertNotIn("SYNTHETIC-MINTED-CREDENTIAL", output)
+        self.assertIn("…TIAL", output)
+        self.assertEqual(profiles.config_path().stat().st_mode & 0o777, 0o600)
+
+    def test_mint_refuses_to_overwrite_a_profile_before_request(self):
+        rc = cli.main(
+            ["desks", "mint-key", "1", "--name", "worker",
+             "--save-profile", "work"]
+        )
+        self.assertEqual(rc, 2)
+        self.assertEqual(self.captured, [])
+
+    def test_unwritable_profile_store_aborts_before_mint(self):
+        with mock.patch.object(
+            profiles, "save_config", side_effect=OSError("read-only")
+        ):
+            rc = cli.main(
+                ["desks", "mint-key", "1", "--name", "worker",
+                 "--save-profile", "worker"]
+            )
+        self.assertEqual(rc, 2)
+        self.assertEqual(self.captured, [])
+
+    def test_post_mint_storage_failure_is_actionable_and_never_leaks(self):
+        import contextlib
+        import io
+
+        real_save = profiles.save_config
+        saves = 0
+
+        def fail_second_save(cfg):
+            nonlocal saves
+            saves += 1
+            if saves == 2:
+                raise OSError("disk full")
+            real_save(cfg)
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with mock.patch.object(profiles, "save_config", side_effect=fail_second_save):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                rc = cli.main(
+                    ["desks", "mint-key", "1", "--name", "worker",
+                     "--save-profile", "worker"]
+                )
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(self.captured), 1)
+        self.assertNotIn("worker", profiles.load_config()["profiles"])
+        combined = stdout.getvalue() + stderr.getvalue()
+        self.assertNotIn("SYNTHETIC-MINTED-CREDENTIAL", combined)
+        self.assertIn("revoke that desk key", combined)
+
+    def test_missing_minted_token_creates_no_profile_and_leaks_nothing(self):
+        import contextlib
+        import io
+
+        def missing_token(req, timeout=None):
+            self.captured.append(
+                {
+                    "method": req.get_method(),
+                    "url": req.full_url,
+                    "auth": req.get_header("Authorization"),
+                }
+            )
+            return _FakeResponse(b"{}")
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with mock.patch.object(client_mod.urllib.request, "urlopen", missing_token):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                rc = cli.main(
+                    ["desks", "mint-key", "1", "--name", "worker",
+                     "--save-profile", "worker"]
+                )
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(self.captured), 1)
+        self.assertNotIn("worker", profiles.load_config()["profiles"])
+        combined = stdout.getvalue() + stderr.getvalue()
+        self.assertNotIn("plain_text_token", combined)
+        self.assertIn("revoke that desk key", combined)
+
+    def test_concurrent_profile_claim_is_preserved_under_unique_name(self):
+        def claim_requested_name(req, timeout=None):
+            self.captured.append(
+                {
+                    "method": req.get_method(),
+                    "url": req.full_url,
+                    "auth": req.get_header("Authorization"),
+                }
+            )
+            cfg = profiles.load_config()
+            profiles.add_profile(
+                cfg, "worker", "https://concurrent.test", "CONCURRENT-CREDENTIAL",
+            )
+            profiles.save_config(cfg)
+            return _FakeResponse(
+                b'{"plain_text_token":"SYNTHETIC-MINTED-CREDENTIAL"}'
+            )
+
+        with mock.patch.object(
+            client_mod.urllib.request, "urlopen", claim_requested_name
+        ):
+            output = _capture_stdout(
+                lambda: self.assertEqual(
+                    cli.main(
+                        ["desks", "mint-key", "1", "--name", "worker",
+                         "--save-profile", "worker"]
+                    ),
+                    0,
+                )
+            )
+        saved = profiles.load_config()["profiles"]
+        self.assertEqual(saved["worker"]["api_key"], "CONCURRENT-CREDENTIAL")
+        self.assertEqual(
+            saved["worker-minted"]["api_key"], "SYNTHETIC-MINTED-CREDENTIAL",
+        )
+        self.assertIn("worker-minted", output)
+        self.assertNotIn("SYNTHETIC-MINTED-CREDENTIAL", output)
+
+    def test_late_profile_claim_retries_without_overwrite(self):
+        real_save = profiles.save_config
+        claimed = False
+
+        def claim_after_reload(cfg):
+            nonlocal claimed
+            candidate = cfg.get("profiles", {}).get("worker", {})
+            if not claimed and candidate.get("api_key") == "SYNTHETIC-MINTED-CREDENTIAL":
+                claimed = True
+                concurrent = profiles.load_config()
+                profiles.add_profile(
+                    concurrent, "worker", "https://concurrent.test",
+                    "CONCURRENT-CREDENTIAL",
+                )
+                real_save(concurrent)
+            real_save(cfg)
+
+        with mock.patch.object(profiles, "save_config", side_effect=claim_after_reload):
+            output = _capture_stdout(
+                lambda: self.assertEqual(
+                    cli.main(
+                        ["desks", "mint-key", "1", "--name", "worker",
+                         "--save-profile", "worker"]
+                    ),
+                    0,
+                )
+            )
+        saved = profiles.load_config()["profiles"]
+        self.assertEqual(saved["worker"]["api_key"], "CONCURRENT-CREDENTIAL")
+        self.assertEqual(
+            saved["worker-minted"]["api_key"], "SYNTHETIC-MINTED-CREDENTIAL",
+        )
+        self.assertIn("worker-minted", output)
+
+    def test_post_mint_reload_failure_requires_revocation(self):
+        import contextlib
+        import io
+
+        initial = profiles.load_config()
+        stderr = io.StringIO()
+        with mock.patch.object(
+            profiles,
+            "load_config",
+            side_effect=[initial, initial, RundeskError("usage", "corrupt config")],
+        ):
+            with contextlib.redirect_stderr(stderr):
+                rc = cli.main(
+                    ["desks", "mint-key", "1", "--name", "worker",
+                     "--save-profile", "worker"]
+                )
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(self.captured), 1)
+        self.assertIn("revoke that desk key", stderr.getvalue())
 
 
 class LocalProfileCommandTests(unittest.TestCase):
@@ -492,12 +728,33 @@ class HelpCommandTests(unittest.TestCase):
         out = _capture_stdout(lambda: self.assertEqual(cli.main(["help", "inbox"]), 0))
         self.assertIn("--unscheduled", out)  # inbox's own options
 
+    def test_help_nested_topic_shows_leaf_help(self):
+        out = _capture_stdout(
+            lambda: self.assertEqual(cli.main(["help", "tasks", "move-week"]), 0)
+        )
+        self.assertIn("--week-id", out)
+        self.assertIn("--inbox", out)
+
     def test_help_unknown_topic_errors(self):
         self.assertEqual(cli.main(["help", "nope"]), 2)
 
     def test_bare_desk_prints_help(self):
         out = _capture_stdout(lambda: self.assertEqual(cli.main([]), 0))
         self.assertIn("usage: desk", out)
+
+    def test_move_week_requires_exactly_one_destination(self):
+        parser = cli.build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["tasks", "move-week", "5"])
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["tasks", "move-week", "5", "--week-id", "2", "--inbox"])
+
+    def test_move_project_requires_exactly_one_destination(self):
+        parser = cli.build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["tasks", "move-project", "5"])
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["tasks", "move-project", "5", "--project-id", "2", "--none"])
 
 
 class UpdateRoutingTests(unittest.TestCase):
@@ -515,7 +772,7 @@ class UpdateRoutingTests(unittest.TestCase):
 
 class CatalogManifestTests(unittest.TestCase):
     """This repository is also a Rundesk skill catalog: `manifest.json` at the root
-    plus a complete Agent Skill package per declared entry.
+    plus each complete Agent Skill package discovered under ``skills/``.
 
     Rundesk validates a catalog on install and then *silently* ignores a package a
     brain would not index — a name with an underscore, a frontmatter name that
@@ -536,6 +793,10 @@ class CatalogManifestTests(unittest.TestCase):
     def setUpClass(cls):
         cls.root = Path(__file__).resolve().parents[1]
         cls.manifest = json.loads((cls.root / "manifest.json").read_text(encoding="utf-8"))
+        cls.packages = sorted(
+            one for one in (cls.root / "skills").iterdir()
+            if (one / "SKILL.md").is_file()
+        )
 
     def test_manifest_version_tracks_the_package_version(self):
         """One release, one number. A catalog whose version trails `__version__`
@@ -549,19 +810,19 @@ class CatalogManifestTests(unittest.TestCase):
         described = self.manifest["description"]
         self.assertTrue(described.strip())
         self.assertLessEqual(len(described), self.DESCRIPTION_LIMIT)
-        self.assertTrue(self.manifest["skills"], "a catalog declares at least one skill")
+        self.assertNotIn("skills", self.manifest, "Rundesk discovers skills from the directory")
+        self.assertTrue(self.packages, "a catalog contains at least one skill")
 
-    def test_every_declared_skill_is_a_complete_package(self):
-        for entry in self.manifest["skills"]:
-            name, declared = entry["name"], entry["path"]
+    def test_every_discovered_skill_is_a_complete_package(self):
+        for at in self.packages:
+            name = at.name
             with self.subTest(skill=name):
-                at = (self.root / declared).resolve()
+                at = at.resolve()
                 self.assertIn(self.root, at.parents, "a skill path cannot leave the repository")
-                self.assertTrue(at.is_dir(), f"{declared} is not a directory")
-                self.assertEqual(at.name, name, "the directory and the manifest must agree")
+                self.assertTrue(at.is_dir(), f"{at} is not a directory")
 
                 page = at / "SKILL.md"
-                self.assertTrue(page.is_file(), f"{declared} has no SKILL.md")
+                self.assertTrue(page.is_file(), f"{at} has no SKILL.md")
                 said = _frontmatter(page.read_text(encoding="utf-8"))
                 self.assertIsNotNone(said, "SKILL.md must open with a --- frontmatter block")
 
@@ -575,13 +836,21 @@ class CatalogManifestTests(unittest.TestCase):
                 self.assertTrue(described.strip(), "the description is the whole of what a brain sees")
                 self.assertLessEqual(len(described), self.DESCRIPTION_LIMIT)
 
-    def test_the_repository_ships_no_undeclared_skill(self):
-        """A package added under `skills/` and left out of the manifest is never
-        installed — and looks installed to whoever added it."""
-        present = sorted(
-            one.name for one in (self.root / "skills").iterdir() if (one / "SKILL.md").is_file()
-        )
-        self.assertEqual(present, sorted(entry["name"] for entry in self.manifest["skills"]))
+                needs_path = at / "rundesk.json"
+                if needs_path.exists():
+                    needs_doc = json.loads(needs_path.read_text(encoding="utf-8"))
+                    self.assertEqual(set(needs_doc), {"needs"})
+                    self.assertIsInstance(needs_doc["needs"], dict)
+                    for env_name, reason in needs_doc["needs"].items():
+                        self.assertRegex(env_name, r"^[A-Z][A-Z0-9_]*$")
+                        self.assertNotIn("__", env_name)
+                        self.assertTrue(isinstance(reason, str) and reason.strip())
+
+    def test_managing_your_desk_declares_its_api_key(self):
+        needs_path = self.root / "skills" / "managing-your-desk" / "rundesk.json"
+        self.assertTrue(needs_path.is_file())
+        needs_doc = json.loads(needs_path.read_text(encoding="utf-8"))
+        self.assertIn("RUNDESK_API_KEY", needs_doc.get("needs", {}))
 
 
 def _frontmatter(text: str) -> dict | None:

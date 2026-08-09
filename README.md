@@ -6,12 +6,17 @@
 
 No dependencies. If you have `python3` (3.9+), you're ready.
 
+`desk` complements [Rundesk CLI](https://github.com/rundesk-ai/rundesk-cli): Rundesk CLI runs the
+agents, while `desk` gives those agents a scoped command-line connection to Rundesk tasks, mentions,
+projects, and files. Install the `desk` executable once per machine, then install this repository's
+skill catalog in Rundesk CLI for the agents that should use it.
+
 ## Get started in 60 seconds
 
 **1. Install** — one command downloads the latest release and puts `desk` on your PATH:
 
 ```bash
-curl -fsSL https://github.com/rundesk-ai/desk-cli/releases/latest/download/install.sh | bash
+curl -fsSL https://get.rundesk.ai/desk | bash
 ```
 
 **2. Add your API key:**
@@ -32,6 +37,21 @@ That's it. You're connected.
 
 <sub>The installer downloads into `~/.desk` and symlinks `desk` into `/usr/local/bin` (or `~/.local/bin`). No git, no clone. If `~/.local/bin` isn't on your PATH, the installer tells you the one line to add.</sub>
 
+### Give Rundesk agents the desk skill
+
+[Rundesk CLI](https://github.com/rundesk-ai/rundesk-cli) installs and grants the compact
+`managing-your-desk` skill from this repository:
+
+```bash
+"$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli
+"$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli --confirm
+"$RUNDESK_COMMAND" skills grant <agent> desk-cli/managing-your-desk
+```
+
+The first install command previews the catalog; the confirmed command installs it. Install the
+`desk` executable once on the machine, then keep one named desk profile per agent so each agent
+uses its own scoped identity.
+
 ## Everyday use
 
 Every Rundesk endpoint is a subcommand. Reads print compact, human-friendly text by default — add `--json` when you want the raw payload. Anything destructive requires `--confirm`, so you can't delete something by accident.
@@ -44,19 +64,34 @@ desk inbox --unscheduled        # ...just the unscheduled items
 desk mentions                   # unread mentions on this desk's tasks
 desk account | changelog        # the account behind the key
 desk projects list | get | create | update | archive | unarchive | delete
-desk page    list | get | create | update | patch | delete | reorder | search
+desk page    list | get | create | update | patch | delete | reorder | search | grep
 desk tasks   list | get | create | update | complete | uncomplete | restore |
              delete | move-week | move-project | deadline-set | deadline-remove |
              recur-set | recur-update | recur-remove | comments | comment | …
 desk week | weeks
-desk asset   get | search | list-project | list-page | upload-* | rename-* | delete-*
+desk asset   get | list | update | search | list-project | list-page | upload-* |
+             rename-* | delete-*
 desk desks   list | get | create | update | delete | retire | unretire |
-             attach | detach | mint-key
+             attach | detach | mint-key --save-profile NAME
 ```
 
-Not sure what a command does? `desk help` lists everything, and `desk help <command>` (e.g. `desk help tasks`) goes deeper.
+Not sure what a command does? `desk help` lists everything, and hierarchical help reaches any leaf:
+`desk help tasks move-week` is equivalent to `desk tasks move-week --help`.
 
-**What you can do depends on your key.** A **desk-bound** key works from a desk's point of view (`desk show`, `desk inbox`, `desk mentions`); an **owner** key manages desks themselves (`desk desks …`).
+**What you can do depends on your key and workspace role.** A **desk-bound** key works from a desk's point of view (`desk show`, `desk inbox`, `desk mentions`). Owner/admin keys additionally manage desks (`desk desks …`) and target account-wide work. The advanced `desk user-mentions …` group is only for a non-desk member key acting as the signed-in human; it is separate from the desk agent's `desk mentions` inbox.
+
+Project page indexing is automatic on create and can be changed with
+`desk projects update <id> --index-pages|--no-index-pages`. The released
+`--hidden` project flag is retained only to return an actionable retirement
+error. Desk assignment uses `--assignee-type`, `--assignee-actor-id`, and—for an
+agent desk—`--owner-id`; the old `--owner-type`/`--owner-actor-id` spellings are
+compatible aliases.
+
+Desk `--brief`, `--rules`, and `--memory` fields remain API-write-compatible, but do not configure
+an agent; rundesk-cli keeps agent instructions and memory in that agent's home.
+`desks mint-key` writes the one-time credential directly into a new protected local profile and
+prints only its masked suffix. It refuses an existing destination before minting; if another process
+claims that name during the request, it preserves both profiles under a unique `-minted` name.
 
 ## Profiles
 
@@ -72,6 +107,11 @@ A profile is a saved API key with a name. You can have as many as you like — o
 | `desk profile local [name]` | Bind the current directory to a profile via a `.desk-profile` file (`--clear` to remove). |
 
 Your credentials live in a `chmod 600` file at `${XDG_CONFIG_HOME:-~/.config}/desk/config.json`, and keys are never shown in full.
+
+Rundesk can also inject named skill profiles as suffixed environment variables. Select one explicitly
+with `desk --env-profile NAME <command>`. It reads only `RUNDESK_API_KEY__NAME` and the optional matching
+`RUNDESK_BASE_URL__NAME`; it never borrows an unsuffixed or saved value. `--env-profile` and the saved
+`--profile` selector are mutually exclusive.
 
 **Which profile does a command use?** First match wins:
 
@@ -92,21 +132,43 @@ Several agents (or people) can share a single install, each with their own ident
   cd /work/agent-b && desk profile local agent-b
   ```
 - **Per command:** `desk --profile agent-b tasks list`.
+- **Rundesk skill profile:** `desk --env-profile agent_b tasks list` reads the complete injected
+  `__AGENT_B` environment set without consulting saved profiles.
 - **Full isolation:** give each agent its own `XDG_CONFIG_HOME` for a completely separate config.
 
 ## Teaching an agent to use it
 
-This repository is also a **Rundesk skill catalog**. If you run agents with [`rundesk`](https://github.com/rundesk-ai/rundesk-cli), install it once and grant the skill to whichever agents have a desk:
+This repository is also a **Rundesk skill catalog** for
+[Rundesk CLI](https://github.com/rundesk-ai/rundesk-cli). The executable and skill are separate:
+install `desk` with the command at the top of this README, then install the catalog through Rundesk
+CLI and grant it to each agent that should manage a desk:
 
 ```bash
-rundesk skills install https://github.com/rundesk-ai/desk-cli            # preview
-rundesk skills install https://github.com/rundesk-ai/desk-cli --confirm  # install
-rundesk skills grant <agent> managing-your-desk
+"$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli            # preview
+"$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli --confirm  # install
+"$RUNDESK_COMMAND" skills grant <agent> desk-cli/managing-your-desk
 ```
 
-`managing-your-desk` teaches an agent to run its desk's tasks: `desk inbox` for the week's work and unread mentions, how Rundesk's numbered week buckets and backlog behave, and that reporting back means a comment on the task.
+`managing-your-desk` teaches an agent to select its exact Rundesk environment profile, distinguish a
+desk-bound identity from a human/user identity, and manage tasks, inbox, mentions, weeks, projects,
+pages, page search/grep/patch, and assets without silently acting through the wrong desk. Non-desk profiles
+can manage the signed-in human's mention inbox; owner/admin profiles can explicitly target and administer
+desks; desk profiles read their own desk actor's mentions.
 
 Installing the catalog does not install `desk` itself — do that first, with the one-liner at the top of this README.
+
+## Upgrading from 0.2
+
+The saved profile format remains version 1; existing profiles continue to load unchanged. Two command
+changes are intentional:
+
+- `desk desks mint-key` now requires `--save-profile NAME`. The one-time credential is written directly
+  to the protected profile store and is never printed in full.
+- The retired project `--hidden` flag now returns an actionable error. Use `projects archive` or
+  `projects unarchive` instead; hidden and archived are not treated as interchangeable states.
+
+Update scripts that use either command before upgrading. Other existing profile selectors and command
+aliases remain supported.
 
 ## Staying up to date
 

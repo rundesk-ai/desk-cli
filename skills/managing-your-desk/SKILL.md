@@ -1,75 +1,61 @@
 ---
 name: managing-your-desk
-description: Manage your tasks and inbox within rundesk using the `desk` cli. Use for anything about this desk's work — what is on the plate for this week, what is due, what is unanswered, and creating, mentioned, completing or commenting on tasks.
+description: Use when handling Rundesk tasks, inbox work, mentions, or related project material for a desk or its owner. It supplies the identity-safe desk-cli workflow for reading context, managing the operational queue, and completing work with proof. Do not use it to operate Rundesk agents, gateways, channels, or skill catalogs.
 ---
 
-# Managing desk tasks
+# Manage Rundesk work
 
-Your work is on a desk in Rundesk. The desk is resolved from your key: there is no id to
-pass and no other desk you can reach.
+Use `desk` for the Rundesk API. If `command -v desk` fails or `desk --version` is below 0.3.0,
+stop and tell the owner to install or update desk-cli.
 
-## Start here
-
-```sh
-desk inbox        # this week's tasks, their latest comments, and your unread mentions
-```
-
-One call, and the answer to "what am I working on". Do not rebuild it out of
-`desk tasks list`. `desk show` names the desk, its owner, and its projects.
-
-## Weeks are buckets, not dates
-
-A task sits in exactly one week — Mon–Sun, numbered — or in none, which is the backlog.
-
-| Need | Command |
-|---|---|
-| Week ids and their dates | `desk weeks` |
-| Another week's tasks | `desk inbox --week <id>` |
-| The backlog | `desk inbox --unscheduled` |
-| Move one | `desk tasks move-week <id> --week-id <id>`, or `--inbox` |
-
-`desk tasks create --title "…"` with no `--week-id` lands in the **backlog**, not this week.
-
-**Do not guess a week.** "This week" or a date resolves through `desk weeks`; no timing
-signal means the backlog; a batch that could span weeks is a question for your owner. A
-task filed into the wrong week is invisible until somebody goes looking for it.
-
-## Mentions are how work reaches you
+## Use the matching identity
 
 ```sh
-desk mentions
+"$RUNDESK_COMMAND" skills profiles desk-cli/managing-your-desk
 ```
 
-There is no mark-as-read. **Commenting on the task is what clears its mention** — so one
-you decide not to answer stays unanswered, and stays visible.
+Select a complete named profile matching `$RUNDESK_AGENT` case-insensitively. Use another only when
+the request names it or the owner selects it; never fall back to an owner profile. Run commands as
+`desk --env-profile <name> …`. Use plain `desk` only when the owner explicitly selected the default.
 
-## Reporting back
+Before the first write in a turn, run `show --json` with that prefix and confirm the returned desk.
+If `show` is forbidden, or the request requires a human/owner profile, read
+[profiles and identity](references/profiles-and-identity.md) before continuing.
+
+## Run the desk queue
 
 ```sh
-desk tasks comment <id> "…"      # body is positional, not a flag
-desk tasks complete <id>
+desk --env-profile <name> inbox                 # current-week commitments + mentions
+desk --env-profile <name> inbox --unscheduled   # backlog
+desk --env-profile <name> mentions              # unread desk mentions
+desk --env-profile <name> tasks get <id> --json # full task, comments, and assets
 ```
 
-The comment is where your owner looks for what you did; the conversation you are having is
-not. `@handle` them when you need a decision — `desk show` names them.
+Use the inbox instead of rebuilding it from task lists. The current week is committed execution;
+`--unscheduled` is backlog. Keep operational task state in Rundesk rather than mirroring it into a
+local task file.
 
-## Going further
+For a task, read its body, comments, project, week, deadline, and every `assets[]` item. Fetch each
+attachment with `asset get <asset_id>`; read text inline and open a binary's short-lived
+`download_url` immediately.
 
-- Read `references/task-verbs.md` for a deadline, a repeat, editing or deleting a comment,
-  reopening or restoring a task, or moving one between projects.
-- Read `references/projects-and-files.md` when you need the material behind a task, or when
-  you have a title or phrase instead of an id.
+Comment only meaningful state: an outcome, blocker, decision, handoff, or completion proof. A desk
+mention clears when its task receives a reply. Complete only after the task criteria and the
+applicable project definition of done are proven:
 
-`desk help <command>` is generated from the command itself, so it is right when anything
-here is not.
+```sh
+desk --env-profile <name> tasks comment <id> "<outcome or proof>"
+desk --env-profile <name> tasks complete <id>
+```
 
-## Gotchas
+Without an explicit timing signal, create work in the backlog. Read [task verbs](references/task-verbs.md)
+only for moving work into a week, deadlines, recurrence, filtering, comment maintenance, or restore.
+Read [projects, pages, and assets](references/projects-and-files.md) only when locating or changing
+project material or attachments. Read [owner desk management](references/owner-and-desks.md) only
+for an authorized owner/admin desk change; agents never mint credentials.
 
-- **`desk tasks get <id> --json` carries `assets[]`**, and the actual requirement is often
-  in there rather than in the body. Open each with `desk asset get <id>` before answering:
-  text comes back inline, a binary comes back as a short-lived `download_url`.
-- **Your rules and memory are not on the desk.** They are `AGENTS.md` and `MEMORY.md` in
-  your own home. The desk carries tasks and projects and nothing about you, so do not go
-  looking there for how you are meant to work.
-- **Completing is how you finish a task, never deleting.** Every destructive verb needs
-  `--confirm` and is your owner's call, not yours.
+## Guard writes
+
+Reads are safe. Run create, update, move, comment, complete, archive, upload, rename, or recurrence
+verbs only when the request authorizes that shared-state change. Hard deletes require `--confirm`
+and explicit owner authorization. Use `desk help <group> <verb>` for current flags.
