@@ -145,9 +145,9 @@ install `desk` with the command at the top of this README, then install the cata
 CLI and grant it to each agent that should manage a desk:
 
 ```bash
-rundesk skills install https://github.com/rundesk-ai/desk-cli            # preview
-rundesk skills install https://github.com/rundesk-ai/desk-cli --confirm  # install
-rundesk skills grant <agent> desk-cli/managing-your-desk
+"$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli            # preview
+"$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli --confirm  # install
+"$RUNDESK_COMMAND" skills grant <agent> desk-cli/managing-your-desk
 ```
 
 `managing-your-desk` teaches an agent to select its exact Rundesk environment profile, distinguish a
