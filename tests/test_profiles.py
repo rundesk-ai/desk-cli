@@ -72,6 +72,33 @@ class ProfileStoreTests(unittest.TestCase):
         # base_url is normalized (trailing slash stripped) on add.
         self.assertEqual(reloaded["profiles"]["work"]["base_url"], "https://rundesk.ai")
 
+    def test_version_02_profile_file_loads_and_saves_without_schema_change(self):
+        path = profiles.config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            '{\n'
+            '  "default": "legacy",\n'
+            '  "profiles": {\n'
+            '    "legacy": {\n'
+            '      "api_key": "LEGACY-KEY",\n'
+            '      "base_url": "https://rundesk.ai"\n'
+            '    }\n'
+            '  },\n'
+            '  "version": 1\n'
+            '}\n',
+            encoding="utf-8",
+        )
+
+        cfg = profiles.load_config()
+        profiles.add_profile(cfg, "new", "https://rundesk.ai", "NEW-KEY")
+        profiles.save_config(cfg)
+
+        reloaded = profiles.load_config()
+        self.assertEqual(reloaded["version"], 1)
+        self.assertEqual(reloaded["default"], "legacy")
+        self.assertEqual(reloaded["profiles"]["legacy"]["api_key"], "LEGACY-KEY")
+        self.assertEqual(reloaded["profiles"]["new"]["api_key"], "NEW-KEY")
+
     def test_temp_permissions_are_set_before_secret_bytes_are_written(self):
         cfg = profiles.load_config()
         profiles.add_profile(cfg, "work", "https://rundesk.ai", "SECRET-CREDENTIAL")

@@ -6,6 +6,11 @@
 
 No dependencies. If you have `python3` (3.9+), you're ready.
 
+`desk` complements [Rundesk CLI](https://github.com/rundesk-ai/rundesk-cli): Rundesk CLI runs the
+agents, while `desk` gives those agents a scoped command-line connection to Rundesk tasks, mentions,
+projects, and files. Install the `desk` executable once per machine, then install this repository's
+skill catalog in Rundesk CLI for the agents that should use it.
+
 ## Get started in 60 seconds
 
 **1. Install** — one command downloads the latest release and puts `desk` on your PATH:
@@ -119,7 +124,10 @@ Several agents (or people) can share a single install, each with their own ident
 
 ## Teaching an agent to use it
 
-This repository is also a **Rundesk skill catalog**. If you run agents with [`rundesk`](https://github.com/rundesk-ai/rundesk-cli), install it once and grant the skill to whichever agents have a desk:
+This repository is also a **Rundesk skill catalog** for
+[Rundesk CLI](https://github.com/rundesk-ai/rundesk-cli). The executable and skill are separate:
+install `desk` with the command at the top of this README, then install the catalog through Rundesk
+CLI and grant it to each agent that should manage a desk:
 
 ```bash
 rundesk skills install https://github.com/rundesk-ai/desk-cli            # preview
@@ -134,6 +142,19 @@ can manage the signed-in human's mention inbox; owner/admin profiles can explici
 desks; desk profiles read their own desk actor's mentions.
 
 Installing the catalog does not install `desk` itself — do that first, with the one-liner at the top of this README.
+
+## Upgrading from 0.2
+
+The saved profile format remains version 1; existing profiles continue to load unchanged. Two command
+changes are intentional:
+
+- `desk desks mint-key` now requires `--save-profile NAME`. The one-time credential is written directly
+  to the protected profile store and is never printed in full.
+- The retired project `--hidden` flag now returns an actionable error. Use `projects archive` or
+  `projects unarchive` instead; hidden and archived are not treated as interchangeable states.
+
+Update scripts that use either command before upgrading. Other existing profile selectors and command
+aliases remain supported.
 
 ## Staying up to date
 
