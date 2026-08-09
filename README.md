@@ -16,7 +16,7 @@ skill catalog in Rundesk CLI for the agents that should use it.
 **1. Install** — one command downloads the latest release and puts `desk` on your PATH:
 
 ```bash
-curl -fsSL https://github.com/rundesk-ai/desk-cli/releases/latest/download/install.sh | bash
+curl -fsSL https://get.rundesk.ai/desk | bash
 ```
 
 **2. Add your API key:**
@@ -62,7 +62,6 @@ desk inbox                      # this desk's to-do (tasks + mentions)
 desk inbox --week 3             # ...for a specific week
 desk inbox --unscheduled        # ...just the unscheduled items
 desk mentions                   # unread mentions on this desk's tasks
-desk user-mentions list         # signed-in human inbox for a non-desk key
 desk account | changelog        # the account behind the key
 desk projects list | get | create | update | archive | unarchive | delete
 desk page    list | get | create | update | patch | delete | reorder | search | grep
@@ -79,7 +78,7 @@ desk desks   list | get | create | update | delete | retire | unretire |
 Not sure what a command does? `desk help` lists everything, and hierarchical help reaches any leaf:
 `desk help tasks move-week` is equivalent to `desk tasks move-week --help`.
 
-**What you can do depends on your key and workspace role.** A **desk-bound** key works from a desk's point of view (`desk show`, `desk inbox`, `desk mentions`). Any **non-desk** member key can use the signed-in person's mention inbox (`desk user-mentions …`); owner/admin keys additionally manage desks (`desk desks …`) and target account-wide work. The human inbox is distinct from mentions addressed directly to the API-token actor.
+**What you can do depends on your key and workspace role.** A **desk-bound** key works from a desk's point of view (`desk show`, `desk inbox`, `desk mentions`). Owner/admin keys additionally manage desks (`desk desks …`) and target account-wide work. The advanced `desk user-mentions …` group is only for a non-desk member key acting as the signed-in human; it is separate from the desk agent's `desk mentions` inbox.
 
 Project page indexing is automatic on create and can be changed with
 `desk projects update <id> --index-pages|--no-index-pages`. The released
