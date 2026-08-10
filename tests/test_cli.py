@@ -852,6 +852,50 @@ class CatalogManifestTests(unittest.TestCase):
         needs_doc = json.loads(needs_path.read_text(encoding="utf-8"))
         self.assertIn("RUNDESK_API_KEY", needs_doc.get("needs", {}))
 
+    def test_managing_your_desk_routes_persistent_queue_work_within_budget(self):
+        skill_path = self.root / "skills" / "managing-your-desk" / "SKILL.md"
+        skill = skill_path.read_text(encoding="utf-8")
+        described = _frontmatter(skill)["description"]
+        self.assertIn("persistent operational queue", described)
+        self.assertIn("bounded specialists without persistent queues", described)
+        self.assertIn("including related project work", described)
+        self.assertIn("GitHub remain implementation truth", described)
+        self.assertLessEqual(len(skill.splitlines()), 120)
+        self.assertLessEqual(len(skill.split()), 1_000)
+
+    def test_managing_your_desk_covers_queue_contract_and_adoption(self):
+        skill_dir = self.root / "skills" / "managing-your-desk"
+        core = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+        adoption = (skill_dir / "references" / "queue-adoption.md").read_text(
+            encoding="utf-8"
+        )
+        core_text = " ".join(core.split())
+
+        for required in (
+            "Treat **This week** as the ordered commitment and work top-down.",
+            "inspect both the unscheduled inbox and mentions",
+            "owner-requested work and tasks derived from owned goals",
+            "independently completable chunks",
+            "GitHub or the project repository is the implementation source of truth",
+            "Comment sparingly and briefly",
+            "Mark done only after the outcome is delivered",
+            "assign a real future week, deadline, or recurrence",
+            "Contact or mention the Desk owner only for a blocker",
+            "Ordinary queue operation never edits an agent home or rule file",
+            "Bounded specialist agents do not adopt or own persistent queues",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, core_text)
+
+        self.assertIn("## Desk queue ownership", adoption)
+        self.assertIn("`managing-your-desk` skill", adoption)
+        self.assertIn("cmp -s AGENTS.md CLAUDE.md", adoption)
+        self.assertIn("write the same complete merged content to both files", adoption)
+        self.assertIn("Preserve every unrelated standing rule", adoption)
+        for field in ("Outcome:", "Scope/limits:", "Done:", "Proof:", "Next:", "Blocked:"):
+            with self.subTest(field=field):
+                self.assertIn(field, adoption)
+
 
 def _frontmatter(text: str) -> dict | None:
     """The `name` and `description` out of a SKILL.md, or None if there is no block.
