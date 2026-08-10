@@ -149,11 +149,13 @@ CLI and grant it to each agent that should manage a desk:
 "$RUNDESK_COMMAND" skills grant <agent> desk-cli/managing-your-desk
 ```
 
-`managing-your-desk` teaches an agent to select its exact Rundesk environment profile, distinguish a
-desk-bound identity from a human/user identity, and manage tasks, inbox, mentions, weeks, projects,
-pages, page search/grep/patch, and assets without silently acting through the wrong desk. Non-desk profiles
-can manage the signed-in human's mention inbox; owner/admin profiles can explicitly target and administer
-desks; desk profiles read their own desk actor's mentions.
+`managing-your-desk` teaches a Desk-owning agent to select its exact Rundesk environment profile and
+self-manage an ordered weekly commitment: promote handleable inbox/mention work, keep active tasks as
+compact briefs, preserve GitHub as implementation truth, schedule real follow-up, and complete only
+with proof. It also includes an authority-gated standing-rule snippet for persistent queue owners;
+bounded specialist agents do not adopt it. Non-desk profiles can manage the signed-in human's mention
+inbox; owner/admin profiles can explicitly target and administer desks; desk profiles read their own
+desk actor's mentions.
 
 Installing the catalog does not install `desk` itself — do that first, with the one-liner at the top of this README.
 
