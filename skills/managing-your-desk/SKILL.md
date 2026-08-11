@@ -39,13 +39,14 @@ the week ordered.
 If This week is empty, inspect both the unscheduled inbox and mentions. Select handleable work and
 move it into This week before starting. Add authorized owner-requested work and tasks derived from
 owned goals to the queue. Split a large goal into independently completable chunks, each with its own
-done criteria; do not use one indefinite umbrella task as the execution unit.
+observable, measurable done criteria and required proof; do not use one indefinite umbrella task as
+the execution unit.
 
 Make every active task a compact brief containing:
 
 - the outcome;
 - scope and limits;
-- definition of done;
+- observable, measurable definition of done;
 - required proof; and
 - the current next action, or blocker when one exists.
 
@@ -69,6 +70,10 @@ of done are verified:
 desk --env-profile <name> tasks comment <id> "<decision, blocker, handoff, state, or proof>"
 desk --env-profile <name> tasks complete <id>
 ```
+
+At every queue review, give each active task an executable next action or explicit blocker. Once it
+is no longer active, complete it after proof, re-scope it, or assign a real future week, deadline, or
+recurrence; never leave it indefinitely stale.
 
 When an owned item genuinely requires future observation or action, assign a real future week,
 deadline, or recurrence instead of writing a vague reminder. Do not defer work that can be completed
