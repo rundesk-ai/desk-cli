@@ -50,6 +50,8 @@ Make every active task a compact brief containing:
 - required proof; and
 - the current next action, or blocker when one exists.
 
+Use Markdown headings, short bullets, checklists, links, and inline code when they make the brief
+easier to scan. Keep the body concise; it is an operational brief, not a long implementation plan.
 GitHub or the project repository is the implementation source of truth. Desk tracks operational
 commitment, ordering, and concise resumable state; do not copy changing implementation detail into
 the task. Read [queue adoption and brief examples](references/queue-adoption.md) only when the owner
@@ -62,9 +64,10 @@ attachment with `asset get <asset_id>`; read text inline and open a binary's sho
 `download_url` immediately.
 
 Comment sparingly and briefly: record only durable decisions, blockers, handoffs or PRs, exact
-resumable state, and exact verification. A desk mention clears when its task receives a reply. Mark
-done only after the outcome is delivered and the task criteria plus applicable project definition
-of done are verified:
+resumable state, and exact verification. Use Markdown only when a short link, bullet, or inline-code
+reference improves that record; do not post routine starts, running logs, or detailed plans. A desk
+mention clears when its task receives a reply. Mark done only after the outcome is delivered and the
+task criteria plus applicable project definition of done are verified:
 
 ```sh
 desk --env-profile <name> tasks comment <id> "<decision, blocker, handoff, state, or proof>"
