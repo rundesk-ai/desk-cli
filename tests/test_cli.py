@@ -27,6 +27,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "desk_cli"
@@ -240,6 +241,69 @@ class ApiEndpointCoverageTests(_TransportMixin):
         # are dispatched indirectly, e.g. `fn = client.set_task_recurring; fn(...)`.
         orphans = [m for m in methods if f".{m}" not in source]
         self.assertEqual(orphans, [], f"client methods not reachable from any command: {orphans}")
+
+
+class MarkdownRoundTripTests(_TransportMixin):
+    def test_task_body_and_comment_round_trip_exactly(self) -> None:
+        task_body = (
+            "## Outcome\n\n"
+            "Preserve [Desk Markdown](https://rundesk.ai) through `desk`.\n\n"
+            "## Definition of done\n\n"
+            "- [x] Headings and checklists survive.\n"
+            "- Bullets, links, and inline code stay byte-for-byte intact.\n"
+        )
+        comment_body = (
+            "Verified: [CLI proof](https://example.test/proof) kept `inline code` intact."
+        )
+        stored_task = {"id": 41, "title": "Markdown brief"}
+        stored_comments = []
+
+        def round_trip_api(req: Any, timeout: Any = None) -> _FakeResponse:
+            method = req.get_method()
+            path = req.full_url.split("/api/v1", 1)[1].split("?", 1)[0]
+            payload = json.loads(req.data.decode("utf-8")) if req.data else None
+
+            if (method, path) == ("POST", "/tasks"):
+                stored_task.update(payload)
+                response = stored_task
+            elif (method, path) == ("GET", "/tasks/41"):
+                response = stored_task
+            elif (method, path) == ("POST", "/tasks/41/comments"):
+                comment = {"id": 7, "body": payload["body"]}
+                stored_comments.append(comment)
+                response = {"comment": comment}
+            elif (method, path) == ("GET", "/tasks/41/comments"):
+                response = {"comments": stored_comments}
+            else:
+                self.fail(f"unexpected request: {method} {path}")
+            return _FakeResponse(json.dumps(response).encode("utf-8"))
+
+        with mock.patch.object(client_mod.urllib.request, "urlopen", round_trip_api):
+            created = _capture_stdout(
+                lambda: self.assertEqual(
+                    cli.main(
+                        ["tasks", "create", "--title", "Markdown brief", "--body", task_body]
+                    ),
+                    0,
+                )
+            )
+            fetched = _capture_stdout(
+                lambda: self.assertEqual(cli.main(["tasks", "get", "41", "--json"]), 0)
+            )
+            posted = _capture_stdout(
+                lambda: self.assertEqual(
+                    cli.main(["tasks", "comment", "41", comment_body]),
+                    0,
+                )
+            )
+            comments = _capture_stdout(
+                lambda: self.assertEqual(cli.main(["tasks", "comments", "41"]), 0)
+            )
+
+        self.assertEqual(json.loads(created)["body"], task_body)
+        self.assertEqual(json.loads(fetched)["body"], task_body)
+        self.assertEqual(json.loads(posted)["comment"]["body"], comment_body)
+        self.assertEqual(json.loads(comments)["comments"][0]["body"], comment_body)
 
 
 class DeskSurfaceTests(_TransportMixin):
@@ -896,9 +960,15 @@ class CatalogManifestTests(unittest.TestCase):
         self.assertIn("cmp -s AGENTS.md CLAUDE.md", adoption)
         self.assertIn("write the same complete merged content to both files", adoption)
         self.assertIn("Preserve every unrelated standing rule", adoption)
-        for field in ("Outcome:", "Scope/limits:", "Done:", "Proof:", "Next:", "Blocked:"):
+        for field in (
+            "## Outcome", "## Scope / limits", "## Definition of done",
+            "## Proof", "## Next", "## Blocked",
+        ):
             with self.subTest(field=field):
                 self.assertIn(field, adoption)
+        self.assertIn("- [ ]", adoption)
+        self.assertIn("operational brief, not a duplicate implementation plan", adoption)
+        self.assertIn("Do not add headings, checklists, routine start", adoption)
 
 
 def _frontmatter(text: str) -> dict | None:

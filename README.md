@@ -157,6 +157,11 @@ bounded specialist agents do not adopt it. Non-desk profiles can manage the sign
 inbox; owner/admin profiles can explicitly target and administer desks; desk profiles read their own
 desk actor's mentions.
 
+Task bodies and comments preserve Markdown through the CLI/API path. Use headings, bullets,
+checklists, links, and inline code to make compact task briefs scannable. Keep comments to short
+decisions, blockers, handoffs, resumable state, or verification; detailed plans and changing
+implementation state stay in GitHub or the project repository.
+
 Installing the catalog does not install `desk` itself — do that first, with the one-liner at the top of this README.
 
 ## Upgrading from 0.2

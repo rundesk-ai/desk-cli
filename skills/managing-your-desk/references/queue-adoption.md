@@ -38,24 +38,49 @@ owner to resolve the conflict.
 
 ## Keep tasks and comments compact
 
-Use this task-body shape; omit `Blocked` when there is none:
+Task bodies support Markdown. Use this concise shape and omit `Blocked` when there is none:
 
 ```markdown
-Outcome: <observable result>
-Scope/limits: <included work; important non-goals or authority limits>
-Done: <independently checkable completion criteria>
-Proof: <required command, artifact, review, or user-path observation>
-Next: <one concrete action>
-Blocked: <condition and the exact decision or authority needed>
+## Outcome
+
+<Observable result>
+
+## Scope / limits
+
+- Include: <bounded work>
+- Exclude: <important non-goal or authority limit>
+
+## Definition of done
+
+- [ ] <Independently checkable completion criterion>
+- [ ] <Required behavior or artifact>
+
+## Proof
+
+- `<exact command>`
+- [Review or artifact](https://example.test/review)
+
+## Next
+
+<One concrete action>
+
+## Blocked
+
+<Condition and the exact decision or authority needed>
 ```
 
-Keep changing plans, code state, and detailed investigation in GitHub or the project. Use at most a
-short Desk comment when durable coordination value exists, for example:
+Keep changing plans, code state, and detailed investigation in GitHub or the project. A task body is
+an operational brief, not a duplicate implementation plan. Use at most a short Desk comment when
+durable coordination value exists. Prefer one sentence; use a second line or a single bullet only
+when it improves a decision, blocker, handoff, resumable state, or verification record. Links and
+inline code are useful when exact references matter. Do not add headings, checklists, routine start
+notices, running logs, or detailed plans to comments; link to the implementation source instead.
+Examples:
 
-```text
-Decision: keep the released JSON shape; implement the new field behind --verbose.
+```markdown
+Decision: keep the released JSON shape; implement the new field behind `--verbose`.
 Blocked: production fixture access is missing; owner decision needed on synthetic proof.
-PR: <link> — ready for review; checks named in the PR are green.
-Resume: parser updated; next run tests/test_cli.py, then inspect default output.
-Verified: python3 tests/test_cli.py — 88 tests passed, 0 skipped.
+PR: [#123](https://example.test/pull/123) — ready for review; named checks are green.
+Resume: parser updated; next run `tests/test_cli.py`, then inspect default output.
+Verified: `python3 tests/test_cli.py` — 88 tests passed, 0 skipped.
 ```
