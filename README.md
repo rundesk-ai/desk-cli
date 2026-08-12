@@ -54,9 +54,9 @@ The first install command previews the catalog; the confirmed command installs i
 `desk` executable once on the machine, then keep one named desk profile per agent so each agent
 uses its own scoped identity. Grant exactly one workflow skill per agent:
 
-- **`handling-assigned-desk-work`** is passive. The owner names task IDs; the agent fetches and
-  executes only those tasks, then leaves one `Ready for review: <link>`, `Verified: <proof>`, or
-  `Blocked: <need>` comment. It never creates, selects, reprioritizes, reschedules, or closes work.
+- **`handling-assigned-desk-work`** is passive. The agent fetches and executes only owner-requested
+  tasks, then mentions the Desk owner in one compact `Ready for review`, `Verified`, or `Blocked`
+  comment. It never creates, self-selects, reprioritizes, reschedules, or closes work.
 - **`managing-your-desk`** delegates active queue ownership. The agent may intake work, prioritize
   its week, maintain task briefs and timing, and complete verified tasks under its standing rules.
 
@@ -163,8 +163,10 @@ CLI and grant exactly one workflow to each agent that should use Desk:
 ```
 
 `handling-assigned-desk-work` teaches a passively managed agent to select its exact profile, fetch
-only owner-named tasks, read their complete context, and hand back one compact review link, proof, or
-blocker. Inbox visibility is never authority to choose work, and the owner keeps lifecycle control.
+only owner-requested tasks, read their complete context, and mention the Desk owner in one compact
+review link, proof, or blocker. Inbox visibility is never authority to choose work, and even an
+explicit instruction to handle all assigned tasks grants no standing queue authority. The owner
+keeps lifecycle control.
 
 `managing-your-desk` teaches a Desk-owning agent to self-manage an ordered weekly commitment: promote
 handleable inbox/mention work, keep active tasks as compact briefs, preserve GitHub as implementation

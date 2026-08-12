@@ -1,6 +1,6 @@
 {
   "schema": 1,
   "name": "desk-cli",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Manage or passively handle Rundesk tasks, desks, projects, pages, mentions, and assets with desk-cli."
 }

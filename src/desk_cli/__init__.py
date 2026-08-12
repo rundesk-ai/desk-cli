@@ -11,4 +11,4 @@ The repository is also a Rundesk skill catalog, and ``manifest.json``'s ``versio
 tracks this one — ``tests/test_cli.py`` fails when the two drift apart.
 """
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
