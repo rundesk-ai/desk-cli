@@ -1,6 +1,6 @@
 ---
 name: handling-assigned-desk-work
-description: Use when the owner asks an agent to handle, inspect, continue, or report on specific Rundesk Desk task IDs without delegating queue management. It supplies a passive, identity-safe workflow for fetching assigned context, doing only the named work, and posting one compact blocker or ready-for-review comment. Do not use it to choose work from an inbox, manage task priority or lifecycle, or self-create work.
+description: Use when the owner asks an agent to handle, inspect, continue, or report on named Rundesk Desk tasks without delegating queue management. It supplies a passive, identity-safe workflow for fetching only owner-requested work and posting one compact owner-mentioned handoff. Do not use it to choose work from an inbox, manage task priority or lifecycle, or self-create work.
 ---
 
 # Handle assigned Desk work
@@ -18,14 +18,22 @@ Select one complete named profile matching `$RUNDESK_AGENT` case-insensitively. 
 when the owner names it. Run every Desk command as `desk --env-profile <name> …`; never fall back to
 an owner/default profile.
 
+Read the Desk owner's exact handle before the terminal handoff; never infer it from a name:
+
+```sh
+desk --env-profile <name> show --json
+```
+
 Do not use this skill when the same agent holds `managing-your-desk`. The two skills grant conflicting
 authority: one is passive assigned-work handling and the other delegates queue management.
 
 ## Work only what the owner names
 
 An explicit task ID from the owner authorizes reading and handling that task within its recorded
-scope. Inbox presence, assignment, priority, a mention, or discovering related work does not
-authorize starting it. Listing the inbox answers what is assigned; it never selects the next task.
+scope. If the owner explicitly says to handle all assigned Desk tasks, work only the tasks returned
+for that request; the instruction creates no standing queue authority. Inbox presence, assignment,
+priority, a mention, or discovering related work does not authorize starting it. Listing the inbox
+answers what is assigned; it never selects the next task.
 
 ```sh
 desk --env-profile <name> inbox
@@ -43,12 +51,13 @@ closes the work.
 ## Leave one short terminal comment
 
 Post no start, progress, plan, resume, investigation, or narrative-summary comments. When the named
-work reaches a terminal handoff, post exactly one compact comment:
+work reaches a terminal handoff, post exactly one compact comment. Prefix it with the exact
+`owner.handle` from `desk show --json`; bare `@handle` mentions resolve server-side:
 
 ```text
-Ready for review: <authoritative link>
-Blocked: <specific decision, authority, or missing input>
-Verified: <one short proof when no review link exists>
+@<owner-handle> Ready for review: <authoritative link>
+@<owner-handle> Blocked: <specific decision, authority, or missing input>
+@<owner-handle> Verified: <one short proof when no review link exists>
 ```
 
 Prefer `Ready for review` with the PR, document, report, or other review URL. A link is enough; do not
@@ -57,7 +66,7 @@ repeat its title, task scope, implementation summary, test log, or checks alread
 only when work cannot safely advance, naming the one thing needed.
 
 ```sh
-desk --env-profile <name> tasks comment <id> "Ready for review: <url>"
+desk --env-profile <name> tasks comment <id> "@<owner-handle> Ready for review: <url>"
 ```
 
 If the owner requests corrections, do them against the same task and post one new terminal comment
