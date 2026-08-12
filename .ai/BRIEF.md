@@ -2,7 +2,7 @@
 
 ## Story
 
-`desk` is a zero-dependency, installable command-line client for the Rundesk API. It is distributed to strangers' machines via `curl | bash`, stores their API credentials locally, and exposes the full Rundesk REST surface — account, the desk read surface (identity, inbox, mentions), projects, pages, tasks, weeks, assets, and owner desk management — as plain subcommands with stable, parseable output. It runs on the system `python3` (3.9+) and the standard library only, and self-updates over HTTPS without git. The outcome: anyone with Python can drive Rundesk from a terminal or a script in about a minute.
+`desk` is a zero-dependency, installable command-line client for the Rundesk API. It is distributed to strangers' machines via `curl | bash`, stores their API credentials locally, and exposes the full Rundesk REST surface — account, the desk read surface (identity, inbox, mentions), projects, pages, tasks, weeks, assets, and owner desk management — as plain subcommands with stable, parseable output. Its skill catalog separately supports owner-assigned passive task handling and delegated active queue management. It runs on the system `python3` (3.9+) and the standard library only, and self-updates over HTTPS without git. The outcome: anyone with Python can drive Rundesk from a terminal or a script in about a minute.
 
 ## Users / ICP
 

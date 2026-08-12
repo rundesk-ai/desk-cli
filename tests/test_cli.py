@@ -916,6 +916,42 @@ class CatalogManifestTests(unittest.TestCase):
         needs_doc = json.loads(needs_path.read_text(encoding="utf-8"))
         self.assertIn("RUNDESK_API_KEY", needs_doc.get("needs", {}))
 
+    def test_handling_assigned_work_declares_its_api_key(self):
+        needs_path = self.root / "skills" / "handling-assigned-desk-work" / "rundesk.json"
+        self.assertTrue(needs_path.is_file())
+        needs_doc = json.loads(needs_path.read_text(encoding="utf-8"))
+        self.assertIn("RUNDESK_API_KEY", needs_doc.get("needs", {}))
+
+    def test_handling_assigned_work_keeps_owner_control_and_comments_compact(self):
+        skill_path = self.root / "skills" / "handling-assigned-desk-work" / "SKILL.md"
+        skill = skill_path.read_text(encoding="utf-8")
+        skill_text = " ".join(skill.split())
+        described = _frontmatter(skill)["description"]
+
+        self.assertIn("specific Rundesk Desk task IDs", described)
+        self.assertIn("without delegating queue management", described)
+        self.assertIn("Do not use it to choose work from an inbox", described)
+        for required in (
+            "Inbox presence, assignment, priority, a mention, or discovering related work does not",
+            "Never create a task or change its title, body, project, priority, week, deadline",
+            "The owner reviews and closes the work.",
+            "Post no start, progress, plan, resume, investigation, or narrative-summary comments.",
+            "Ready for review: <authoritative link>",
+            "Blocked: <specific decision, authority, or missing input>",
+            "Verified: <one short proof when no review link exists>",
+            "Do not use this skill when the same agent holds `managing-your-desk`.",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, skill_text)
+        self.assertLessEqual(len(skill.splitlines()), 100)
+        self.assertLessEqual(len(skill.split()), 700)
+
+    def test_readme_distinguishes_the_two_desk_authority_models(self):
+        readme = (self.root / "README.md").read_text(encoding="utf-8")
+        self.assertIn("**`handling-assigned-desk-work`** is passive", readme)
+        self.assertIn("**`managing-your-desk`** delegates active queue ownership", readme)
+        self.assertIn("Do not grant both to one agent", readme)
+
     def test_managing_your_desk_routes_persistent_queue_work_within_budget(self):
         skill_path = self.root / "skills" / "managing-your-desk" / "SKILL.md"
         skill = skill_path.read_text(encoding="utf-8")

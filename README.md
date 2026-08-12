@@ -37,20 +37,32 @@ That's it. You're connected.
 
 <sub>The installer downloads into `~/.desk` and symlinks `desk` into `/usr/local/bin` (or `~/.local/bin`). No git, no clone. If `~/.local/bin` isn't on your PATH, the installer tells you the one line to add.</sub>
 
-### Give Rundesk agents the desk skill
+### Give Rundesk agents the right desk skill
 
 [Rundesk CLI](https://github.com/rundesk-ai/rundesk-cli) installs and grants the compact
-`managing-your-desk` skill from this repository:
+skills from this repository:
 
 ```bash
 "$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli
 "$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli --confirm
+"$RUNDESK_COMMAND" skills grant <agent> desk-cli/handling-assigned-desk-work
+# Or, when the agent should own its queue:
 "$RUNDESK_COMMAND" skills grant <agent> desk-cli/managing-your-desk
 ```
 
 The first install command previews the catalog; the confirmed command installs it. Install the
 `desk` executable once on the machine, then keep one named desk profile per agent so each agent
-uses its own scoped identity.
+uses its own scoped identity. Grant exactly one workflow skill per agent:
+
+- **`handling-assigned-desk-work`** is passive. The owner names task IDs; the agent fetches and
+  executes only those tasks, then leaves one `Ready for review: <link>`, `Verified: <proof>`, or
+  `Blocked: <need>` comment. It never creates, selects, reprioritizes, reschedules, or closes work.
+- **`managing-your-desk`** delegates active queue ownership. The agent may intake work, prioritize
+  its week, maintain task briefs and timing, and complete verified tasks under its standing rules.
+
+Do not grant both to one agent. Their authority models intentionally conflict. In either model, use
+a desk-bound profile for the agent; the owner remains responsible for granting the intended level of
+authority and reviewing work.
 
 ## Everyday use
 
@@ -141,21 +153,27 @@ Several agents (or people) can share a single install, each with their own ident
 This repository is also a **Rundesk skill catalog** for
 [Rundesk CLI](https://github.com/rundesk-ai/rundesk-cli). The executable and skill are separate:
 install `desk` with the command at the top of this README, then install the catalog through Rundesk
-CLI and grant it to each agent that should manage a desk:
+CLI and grant exactly one workflow to each agent that should use Desk:
 
 ```bash
 "$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli            # preview
 "$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli --confirm  # install
-"$RUNDESK_COMMAND" skills grant <agent> desk-cli/managing-your-desk
+"$RUNDESK_COMMAND" skills grant <agent> desk-cli/handling-assigned-desk-work
+# Or: desk-cli/managing-your-desk for delegated queue ownership
 ```
 
-`managing-your-desk` teaches a Desk-owning agent to select its exact Rundesk environment profile and
-self-manage an ordered weekly commitment: promote handleable inbox/mention work, keep active tasks as
-compact briefs, preserve GitHub as implementation truth, schedule real follow-up, and complete only
-with proof. It also includes an authority-gated standing-rule snippet for persistent queue owners;
-bounded specialist agents do not adopt it. Non-desk profiles can manage the signed-in human's mention
-inbox; owner/admin profiles can explicitly target and administer desks; desk profiles read their own
-desk actor's mentions.
+`handling-assigned-desk-work` teaches a passively managed agent to select its exact profile, fetch
+only owner-named tasks, read their complete context, and hand back one compact review link, proof, or
+blocker. Inbox visibility is never authority to choose work, and the owner keeps lifecycle control.
+
+`managing-your-desk` teaches a Desk-owning agent to self-manage an ordered weekly commitment: promote
+handleable inbox/mention work, keep active tasks as compact briefs, preserve GitHub as implementation
+truth, schedule real follow-up, and complete only with proof. It also includes an authority-gated
+standing-rule snippet for persistent queue owners; bounded specialist agents do not adopt it.
+
+Choose one. Never grant both skills to the same agent. Non-desk profiles can manage the signed-in
+human's mention inbox; owner/admin profiles can explicitly target and administer desks; desk profiles
+read their own desk actor's mentions.
 
 Task bodies and comments preserve Markdown through the CLI/API path. Use headings, bullets,
 checklists, links, and inline code to make compact task briefs scannable. Keep comments to short

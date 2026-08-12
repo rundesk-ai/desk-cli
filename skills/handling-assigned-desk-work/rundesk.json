@@ -1,0 +1,5 @@
+{
+  "needs": {
+    "RUNDESK_API_KEY": "a desk-bound Rundesk API key for reading assigned work and posting review outcomes"
+  }
+}
