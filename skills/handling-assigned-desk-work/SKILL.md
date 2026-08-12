@@ -72,3 +72,7 @@ desk --env-profile <name> tasks comment <id> "@<owner-handle> Ready for review: 
 If the owner requests corrections, do them against the same task and post one new terminal comment
 only when there is materially new review evidence. Never edit or delete old comments to make the
 thread look cleaner.
+
+When the owner asks to configure an agent for this passive workflow, read
+[the adoption template](references/adoption.md). Do not add its standing rule during ordinary task
+handling.
