@@ -166,7 +166,8 @@ CLI and grant exactly one workflow to each agent that should use Desk:
 only owner-requested tasks, read their complete context, and mention the Desk owner in one compact
 review link, proof, or blocker. Inbox visibility is never authority to choose work, and even an
 explicit instruction to handle all assigned tasks grants no standing queue authority. The owner
-keeps lifecycle control.
+keeps lifecycle control. Its conditional adoption reference supplies a short AGENTS/CLAUDE routing
+template while keeping the operational rules in the skill.
 
 `managing-your-desk` teaches a Desk-owning agent to self-manage an ordered weekly commitment: promote
 handleable inbox/mention work, keep active tasks as compact briefs, preserve GitHub as implementation

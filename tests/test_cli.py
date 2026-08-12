@@ -944,11 +944,21 @@ class CatalogManifestTests(unittest.TestCase):
             "@<owner-handle> Blocked: <specific decision, authority, or missing input>",
             "@<owner-handle> Verified: <one short proof when no review link exists>",
             "Do not use this skill when the same agent holds `managing-your-desk`.",
+            "[the adoption template](references/adoption.md)",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, skill_text)
         self.assertLessEqual(len(skill.splitlines()), 100)
         self.assertLessEqual(len(skill.split()), 700)
+
+        adoption = (skill_path.parent / "references" / "adoption.md").read_text(encoding="utf-8")
+        self.assertIn("Keep local task management as the execution and continuity system.", adoption)
+        self.assertIn("load `handling-assigned-desk-work`", adoption)
+        self.assertIn("never treat", adoption)
+        self.assertIn("Desk inbox visibility as permission to choose work", adoption)
+        self.assertIn("preserve every unrelated rule", adoption)
+        self.assertIn("cmp -s AGENTS.md CLAUDE.md", adoption)
+        self.assertIn("the skill is their source of truth", adoption)
 
     def test_readme_distinguishes_the_two_desk_authority_models(self):
         readme = (self.root / "README.md").read_text(encoding="utf-8")
