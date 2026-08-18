@@ -12,6 +12,9 @@ This is a **distributed command-line tool**. It is installed onto strangers' mac
 2. Read every file before editing it.
 3. Search the codebase before writing new logic. If it exists — reuse, extend, or refactor. Never duplicate.
 4. When the user raises a concern, investigate before contradicting. Contradict only with evidence from the codebase.
+5. Use [`.github/pull_request_template.md`](./.github/pull_request_template.md) for every pull
+   request. Preserve its seven headings and checklists. Mark an item complete only from evidence
+   observed for the exact head commit; explain any item that is not applicable.
 
 ## Hard Gates — Require Explicit User Approval
 
