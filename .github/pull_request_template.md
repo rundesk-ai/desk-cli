@@ -1,36 +1,69 @@
 ## Summary
 
-<!-- What changes, and why? Keep this to one or two lines. -->
+<!-- State what changes and why in one or two lines. -->
 
-## Problem
+-
 
-<!-- State the affected user or system, the current behavior, and why it is insufficient. -->
+## Scope and compatibility
 
-**Evidence:**
+- Runtime files changed:
+- Skill packages changed:
+- User-visible behavior:
+- Preserved behavior:
+- Command, output, stored-format, install, or update compatibility:
+- Dependencies added: none
 
-- <!-- Issue, observed result, requirement, request, or measurement. -->
+## Critical risk
 
-<!-- For a bug, add: **Root cause:** <responsible mechanism>. -->
+<!-- Required for auth, credentials, privacy, destructive commands, installer/updater behavior, or other critical risk. Write "None" when no critical risk applies. -->
 
-## Implementation
-
-- <!-- Important choices, why this approach, and deliberate scope boundaries. -->
-
-<!-- For auth, permissions, migrations, data loss, privacy, billing, or deployment changes, add: **Critical risk:** <blast radius and mitigation>. -->
+- Risk:
+- Guard:
 
 ## Validation
 
 - [ ] `python3 tests/test_profiles.py && python3 tests/test_cli.py && python3 tests/test_rundesk.py` passes.
-- [ ] Changed command, profile, install, or update behavior has current help text and README documentation.
-- [ ] Released binary/catalog behavior has regression proof and matching package/manifest versions.
+- [ ] All Python sources and tests parse on Python 3.9+.
+- [ ] `bash -n install.sh` passes, or the installer was not touched.
+- [ ] Every changed public CLI or skill workflow has focused offline regression proof recorded below.
+- [ ] `git diff --check` passes.
+- [ ] Required GitHub checks pass for the exact head commit.
 
-<!-- Add exact focused commands and fresh results. Leave a box unchecked when its claim is not proven, and explain why. -->
+```text
+# Exact focused and manual verification commands with observed results
+```
 
-## Issue linkage
+## Repository gates
 
-<!-- Use one standalone `Closes #<number>.` line per issue this PR completes. Use `Refs` for partial work. Remove this comment, but keep the heading. -->
+- [ ] The diff contains no credential, API key, account data, private-project language, owner-specific path, or unrelated artifact.
+- [ ] Runtime code remains Python 3.9+ and standard-library only, unless the owner approved a dependency.
+- [ ] Automated tests remain offline and never call the real Rundesk API.
+- [ ] API keys remain masked and stdout, stderr, prompts, JSON, and tests do not expose secrets.
+- [ ] Default text output, `--json`, command/flag behavior, and stored formats preserve their documented contracts, or the approved compatibility impact is stated above.
+- [ ] Changed command, profile, install, update, or skill behavior has matching help, README, and agent-facing documentation.
+- [ ] `README.md`, `manifest.json`, and `skills/` agree.
+- [ ] Runtime and catalog versions match the intended release scope and are stated below.
 
-## Agent
+## Release
+
+- Runtime version: `<before>` → `<after>`
+- Catalog manifest version: `<before>` → `<after>`
+- SemVer reason:
+- Release or follow-up required after merge:
+
+## Manual user path
+
+<!-- Give the shortest representative installed command or agent workflow and expected result. State clearly when no live API call or installed-catalog smoke test was made. -->
+
+```text
+
+```
+
+**Issue linkage**
+
+<!-- Use one standalone `Closes #<number>.` line per issue this PR completes. Use `Refs` for partial work. Remove this comment, but keep the label. -->
+
+**Agent**
 
 <!-- Replace the placeholder with the filing agent's display name. Do not add provider, model, tool, session, or generated-by branding. -->
 
