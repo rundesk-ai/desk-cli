@@ -70,6 +70,7 @@ PR_TEMPLATE_HEADINGS = [
     "## Repository gates",
     "## Release",
     "## Manual user path",
+    "## Agent",
 ]
 
 PR_TEMPLATE_ANCHORS = [
@@ -80,6 +81,7 @@ PR_TEMPLATE_ANCHORS = [
     "- [ ] API keys remain masked and stdout, stderr, prompts, JSON, and tests do not expose secrets.",
     "- [ ] Default text output, `--json`, command/flag behavior, and stored formats preserve their documented contracts, or the approved compatibility impact is stated above.",
     "- [ ] `README.md`, `manifest.json`, and `skills/` agree.",
+    "🤖 by <Agent>",
 ]
 
 ISSUE_TEMPLATE_HEADINGS = {

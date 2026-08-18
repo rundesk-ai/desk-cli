@@ -63,7 +63,7 @@
 
 <!-- Use one standalone `Closes #<number>.` line per issue this PR completes. Use `Refs` for partial work. Remove this comment, but keep the label. -->
 
-**Agent**
+## Agent
 
 <!-- Replace the placeholder with the filing agent's display name. Do not add provider, model, tool, session, or generated-by branding. -->
 

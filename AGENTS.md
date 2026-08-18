@@ -28,7 +28,7 @@ when adding or reorganizing a published catalog.
 5. Establish the requested outcome, boundaries, compatibility requirements, and observable proof.
    Investigate concerns with repository evidence before contradicting them.
 6. Use [`.github/pull_request_template.md`](.github/pull_request_template.md) for pull-request work;
-   preserve all seven headings and its checklists.
+   preserve all eight headings and its checklists.
 
 ## Repository layout
 
