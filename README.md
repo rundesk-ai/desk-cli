@@ -43,11 +43,12 @@ That's it. You're connected.
 skills from this repository:
 
 ```bash
-"$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli
-"$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli --confirm
-"$RUNDESK_COMMAND" skills grant <agent> desk-cli/handling-assigned-desk-work
+agent_name=ava
+rundesk skills install https://github.com/rundesk-ai/desk-cli
+rundesk skills install https://github.com/rundesk-ai/desk-cli --confirm
+rundesk skills grant "$agent_name" desk-cli/handling-assigned-desk-work
 # Or, when the agent should own its queue:
-"$RUNDESK_COMMAND" skills grant <agent> desk-cli/managing-your-desk
+rundesk skills grant "$agent_name" desk-cli/managing-your-desk
 ```
 
 The first install command previews the catalog; the confirmed command installs it. Install the
@@ -156,9 +157,10 @@ install `desk` with the command at the top of this README, then install the cata
 CLI and grant exactly one workflow to each agent that should use Desk:
 
 ```bash
-"$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli            # preview
-"$RUNDESK_COMMAND" skills install https://github.com/rundesk-ai/desk-cli --confirm  # install
-"$RUNDESK_COMMAND" skills grant <agent> desk-cli/handling-assigned-desk-work
+agent_name=ava
+rundesk skills install https://github.com/rundesk-ai/desk-cli            # preview
+rundesk skills install https://github.com/rundesk-ai/desk-cli --confirm  # install
+rundesk skills grant "$agent_name" desk-cli/handling-assigned-desk-work
 # Or: desk-cli/managing-your-desk for delegated queue ownership
 ```
 
@@ -184,6 +186,13 @@ decisions, blockers, handoffs, resumable state, or verification; detailed plans 
 implementation state stay in GitHub or the project repository.
 
 Installing the catalog does not install `desk` itself — do that first, with the one-liner at the top of this README.
+
+## Skill catalogs
+
+This repository follows the canonical
+[Rundesk skill-catalog repository guide](https://github.com/rundesk-ai/rundesk-cli/blob/main/docs/catalogs.md)
+for package layout, validation, privacy, compatibility, and releases. Rundesk maintains the
+[supported first-party catalog directory](https://github.com/rundesk-ai/rundesk-cli#supported-first-party-catalogs).
 
 ## Upgrading from 0.2
 

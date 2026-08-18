@@ -19,6 +19,7 @@ Run: python3 tests/test_cli.py
 from __future__ import annotations
 
 import argparse
+import hashlib
 import inspect
 import json
 import os
@@ -45,6 +46,71 @@ from client import RundeskClient, RundeskError  # noqa: E402
 
 BASE_URL = "https://example.test"
 API_KEY = "SECRET-KEY-1234"
+
+AGENT_GUIDE_HEADINGS = [
+    "# AGENTS",
+    "## Purpose",
+    "## Before you work",
+    "## Repository layout",
+    "## Package and artifact contract",
+    "## Safety and approval gates",
+    "## Delegation",
+    "## Architecture and conventions",
+    "## Documentation duties",
+    "## Build, test, and run",
+    "## Pull requests and releases",
+    "## Definition of done",
+]
+
+PR_TEMPLATE_HEADINGS = [
+    "## Summary",
+    "## Scope and compatibility",
+    "## Critical risk",
+    "## Validation",
+    "## Repository gates",
+    "## Release",
+    "## Manual user path",
+    "## Agent",
+]
+
+PR_TEMPLATE_ANCHORS = [
+    "- [ ] `python3 tests/test_profiles.py && python3 tests/test_cli.py && python3 tests/test_rundesk.py` passes.",
+    "- [ ] Required GitHub checks pass for the exact head commit.",
+    "- [ ] The diff contains no credential, API key, account data, private-project language, owner-specific path, or unrelated artifact.",
+    "- [ ] Runtime code remains Python 3.9+ and standard-library only, unless the owner approved a dependency.",
+    "- [ ] API keys remain masked and stdout, stderr, prompts, JSON, and tests do not expose secrets.",
+    "- [ ] Default text output, `--json`, command/flag behavior, and stored formats preserve their documented contracts, or the approved compatibility impact is stated above.",
+    "- [ ] `README.md`, `manifest.json`, and `skills/` agree.",
+    "🤖 by <Agent>",
+]
+
+ISSUE_TEMPLATE_HEADINGS = {
+    "bug-report.md": [
+        "## Problem", "## Reproduction", "## Expected behavior", "## Evidence",
+        "## Environment", "## Scope and privacy",
+    ],
+    "change-proposal.md": [
+        "## Problem", "## Desired outcome", "## Users and value",
+        "## Scope and compatibility", "## Alternatives", "## Validation",
+    ],
+}
+
+ISSUE_TEMPLATE_FRONTMATTER = {
+    "bug-report.md": [
+        "---", "name: Bug report", "about: Report reproducible incorrect behavior",
+        'title: "[Bug] "', 'labels: ""', 'assignees: ""', "---",
+    ],
+    "change-proposal.md": [
+        "---", "name: Change proposal",
+        "about: Propose a skill, integration, command, or repository improvement",
+        'title: "[Proposal] "', 'labels: ""', 'assignees: ""', "---",
+    ],
+}
+
+ISSUE_TEMPLATE_DIGESTS = {
+    "bug-report.md": "747da5c0682a73adc61c35407327fb174c648630e80278c275af4a4542da6caf",
+    "change-proposal.md": "2fe6a1d651ce91af2c3d19e98eea150ca26f41ad9a1ed95a6466a692b73eb4d7",
+}
 
 # Command groups handled locally (never hit the API) — excluded from the walk.
 LOCAL_COMMANDS = {"profile", "update", "uninstall", "help"}
@@ -1048,6 +1114,79 @@ def _capture_stdout(fn) -> str:
     with contextlib.redirect_stdout(out):
         fn()
     return out.getvalue()
+
+
+class AgentGuideContractTests(unittest.TestCase):
+    def test_guides_are_identical_and_keep_the_required_heading_order(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        agents = (root / "AGENTS.md").read_bytes()
+        claude = (root / "CLAUDE.md").read_bytes()
+
+        self.assertEqual(agents, claude, "AGENTS.md and CLAUDE.md must be byte-identical")
+        headings = [
+            line for line in agents.decode("utf-8").splitlines()
+            if re.match(r"^#{1,2} ", line)
+        ]
+        self.assertEqual(AGENT_GUIDE_HEADINGS, headings)
+
+    def test_repository_templates_keep_the_required_heading_order(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        pull_request = (root / ".github" / "pull_request_template.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(
+            PR_TEMPLATE_HEADINGS,
+            [line for line in pull_request.splitlines() if line.startswith("## ")],
+        )
+        for anchor in PR_TEMPLATE_ANCHORS:
+            with self.subTest(pull_request_anchor=anchor):
+                self.assertIn(anchor, pull_request)
+        issue_root = root / ".github" / "ISSUE_TEMPLATE"
+        self.assertEqual(
+            set(ISSUE_TEMPLATE_HEADINGS) | {"config.yml"},
+            {path.name for path in issue_root.iterdir() if path.is_file()},
+        )
+        self.assertEqual(
+            b"blank_issues_enabled: false\n",
+            (issue_root / "config.yml").read_bytes(),
+        )
+        for name, expected in ISSUE_TEMPLATE_HEADINGS.items():
+            with self.subTest(template=name):
+                issue_bytes = (issue_root / name).read_bytes()
+                issue = issue_bytes.decode("utf-8")
+                self.assertEqual(
+                    ISSUE_TEMPLATE_DIGESTS[name],
+                    hashlib.sha256(issue_bytes).hexdigest(),
+                )
+                self.assertEqual(ISSUE_TEMPLATE_FRONTMATTER[name], issue.splitlines()[:7])
+                self.assertEqual(
+                    expected,
+                    [line for line in issue.splitlines() if line.startswith("## ")],
+                )
+
+    def test_readme_links_the_canonical_skill_catalog_guide(self) -> None:
+        readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "https://github.com/rundesk-ai/rundesk-cli/blob/main/docs/catalogs.md",
+            readme,
+        )
+        self.assertIn(
+            "https://github.com/rundesk-ai/rundesk-cli#supported-first-party-catalogs",
+            readme,
+        )
+
+    def test_readme_shell_examples_have_no_angle_bracket_metavariables(self) -> None:
+        readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(
+            encoding="utf-8"
+        )
+        shell_blocks = re.findall(r"^```(?:sh|bash)\n(.*?)^```", readme, re.M | re.S)
+        self.assertTrue(shell_blocks, "README.md contains no shell example to check")
+        for block in shell_blocks:
+            with self.subTest(block=block.splitlines()[0] if block.splitlines() else ""):
+                self.assertIsNone(re.search(r"<[^>\n]+>", block))
+                self.assertNotIn("$RUNDESK_COMMAND", block)
 
 
 if __name__ == "__main__":
